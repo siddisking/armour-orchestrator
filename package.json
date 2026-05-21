@@ -9,18 +9,32 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@langchain/community": "^1.1.27",
+    "@langchain/core": "^1.1.41",
+    "@langchain/google-genai": "^2.1.28",
+    "@langchain/openai": "^1.4.4",
+    "bcryptjs": "^3.0.3",
+    "csv-parse": "^6.2.1",
+    "csv-stringify": "^6.7.0",
+    "langchain": "^1.3.4",
+    "next": "14.2.35",
+    "next-auth": "^4.24.14",
+    "pg": "^8.11.3",
     "react": "^18",
     "react-dom": "^18",
-    "next": "14.2.35"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@types/bcryptjs": "^3.0.0",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/uuid": "^11.0.0",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.35",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.35"
+    "typescript": "^5"
   }
 }
