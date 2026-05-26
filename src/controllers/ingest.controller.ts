@@ -13,6 +13,7 @@ export class IngestController {
       const formData = await req.formData();
       const file = formData.get('file') as File;
       const mediaType = (formData.get('mediaType') as string);
+      const uploadMode = (formData.get('uploadMode') as 'overwrite' | 'update') || 'update';
 
       if (!file) {
         return NextResponse.json(
@@ -34,17 +35,20 @@ export class IngestController {
             controller.enqueue(encoder.encode('data: {"status":"started","message":"Ingestion started"}\n\n'));
 
             if (mediaType === 'anime') {
-              await service.processTVAnimeCSVStream(buffer, (count) => {
+              await service.processTVAnimeCSVStream(buffer, uploadMode, (count) => {
                 const progressData = JSON.stringify({ status: 'progress', count });
                 controller.enqueue(encoder.encode(`data: ${progressData}\n\n`));
+              }, (msg) => {
+                const logData = JSON.stringify({ status: 'log', message: msg });
+                controller.enqueue(encoder.encode(`data: ${logData}\n\n`));
               });
             } else if (mediaType === 'series') {
-              await service.processTVSeriesCSVStream(buffer, (count) => {
+              await service.processTVSeriesCSVStream(buffer, uploadMode, (count) => {
                 const progressData = JSON.stringify({ status: 'progress', count });
                 controller.enqueue(encoder.encode(`data: ${progressData}\n\n`));
               });
             } else if (mediaType === 'movies') {
-              await service.processMovieCSVStream(buffer, (count) => {
+              await service.processMovieCSVStream(buffer, uploadMode, (count) => {
                 const progressData = JSON.stringify({ status: 'progress', count });
                 controller.enqueue(encoder.encode(`data: ${progressData}\n\n`));
               });

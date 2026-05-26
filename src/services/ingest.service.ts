@@ -17,19 +17,25 @@ export class IngestService {
    * Processes an Anime CSV buffer, parses it, creates LangChain Documents, and streams batches to PGVectorStore.
    * Calls onProgress with the total count of documents processed so far.
    */
-  async processTVAnimeCSVStream(buffer: Buffer, onProgress: (count: number) => void): Promise<void> {
+  async processTVAnimeCSVStream(
+    buffer: Buffer, 
+    uploadMode: 'overwrite' | 'update', 
+    onProgress: (count: number) => void,
+    onLog?: (msg: string) => void
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       let count = 0;
-      let totalQueued = 0;
       let batch: Document[] = [];
       let batchIds: string[] = [];
-      const BATCH_SIZE = 20; // Reduced batch size for 20-row limit
+      const BATCH_SIZE = 1000; // Increased batch size for Pay-As-You-Go speed
+      
+      const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
       const parser = parse({
         columns: true,
         skip_empty_lines: true,
         relax_quotes: true,
       });
-
 
       parser.on('readable', async () => {
         let record;
@@ -39,13 +45,6 @@ export class IngestService {
           // 1. Filter only for 'TV' type
           if (record.type !== 'TV') {
             continue;
-          }
-
-          // 2. Stop reading if we already queued 20 records
-          if (totalQueued >= 20) {
-            parser.pause();
-            parser.destroy();
-            break;
           }
 
           console.log("Read record:", record.title);
@@ -84,8 +83,6 @@ Synopsis: ${record.synopsis}`;
             studios: cleanedStudios,
           };
 
-          totalQueued++;
-
           const docId = uuidv5(record.mal_id.toString(), ANIME_NAMESPACE);
 
           batch.push(new Document({ pageContent, metadata }));
@@ -102,9 +99,23 @@ Synopsis: ${record.synopsis}`;
             batchIds = [];
 
             try {
-              await this.vectorRepo.addDocuments(currentBatch, currentBatchIds);
-              count += currentBatch.length;
+              const prevLength = currentBatch.length;
+              const result = await this.vectorRepo.addDocuments(currentBatch, currentBatchIds, uploadMode);
+              
+              if (onLog && result.skipped > 0) {
+                onLog(`Skipped ${result.skipped} existing records.`);
+              }
+              if (onLog && result.inserted > 0) {
+                onLog(`Embedded and inserted ${result.inserted} new records.`);
+              }
+              
+              count += prevLength; // Approximate progress based on parsed count
               onProgress(count);
+              
+              if (result.inserted > 0) {
+                await delay(1000); // Small 1-second breather between giant batches
+              }
+              
               parser.resume();
             } catch (err) {
               parser.destroy(err as Error);
@@ -118,7 +129,15 @@ Synopsis: ${record.synopsis}`;
         // Process any remaining documents in the final batch
         if (batch.length > 0) {
           try {
-            await this.vectorRepo.addDocuments(batch, batchIds);
+            const result = await this.vectorRepo.addDocuments(batch, batchIds, uploadMode);
+            
+            if (onLog && result.skipped > 0) {
+              onLog(`Skipped ${result.skipped} existing records.`);
+            }
+            if (onLog && result.inserted > 0) {
+              onLog(`Embedded and inserted ${result.inserted} new records.`);
+            }
+            
             count += batch.length;
             onProgress(count);
           } catch (err) {
@@ -143,7 +162,7 @@ Synopsis: ${record.synopsis}`;
    * Processes a TV Series CSV buffer (Hollywood format).
    * TODO: Implement specific parsing logic for TV Series.
    */
-  async processTVSeriesCSVStream(buffer: Buffer, onProgress: (count: number) => void): Promise<void> {
+  async processTVSeriesCSVStream(buffer: Buffer, uploadMode: 'overwrite' | 'update', onProgress: (count: number) => void): Promise<void> {
     throw new Error("processTVSeriesCSVStream is not yet implemented.");
   }
 
@@ -151,7 +170,7 @@ Synopsis: ${record.synopsis}`;
    * Processes a Movies CSV buffer (Hollywood format).
    * TODO: Implement specific parsing logic for Movies.
    */
-  async processMovieCSVStream(buffer: Buffer, onProgress: (count: number) => void): Promise<void> {
+  async processMovieCSVStream(buffer: Buffer, uploadMode: 'overwrite' | 'update', onProgress: (count: number) => void): Promise<void> {
     throw new Error("processMovieCSVStream is not yet implemented.");
   }
 }
