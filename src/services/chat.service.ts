@@ -7,6 +7,15 @@ import { VectorRepository } from '../repositories/vector.repository';
 const formatDocumentsAsString = (documents: any[]) => 
   documents.map((doc) => doc.pageContent).join("\n\n");
 
+const formatHistory = (history: any[] = []) => {
+  return history
+    .map((msg) => {
+      const prefix = msg.role === 'user' ? 'User' : 'Model';
+      return `${prefix}: ${msg.content}`;
+    })
+    .join("\n");
+};
+
 export class ChatService {
   private vectorRepo: VectorRepository;
   private llm: ChatGoogleGenerativeAI;
@@ -17,23 +26,30 @@ export class ChatService {
     // Initialize Gemini. Requires GOOGLE_API_KEY environment variable.
     this.llm = new ChatGoogleGenerativeAI({
       model: 'gemini-2.5-flash',
-      temperature: 0.7,
+      temperature: 0.3,
     });
   }
 
   /**
-   * Generates a recommendation based on the user's query and context from the vector store.
+   * Generates a recommendation based on the user's query, optional conversation history, and context from the vector store.
    */
-  async generateRecommendation(query: string): Promise<string> {
+  async generateRecommendation(query: string, history?: any[]): Promise<string> {
     try {
       const retriever = await this.vectorRepo.getRetriever();
+      const chatHistoryString = formatHistory(history);
 
-      // Define the RAG prompt template
+      // Define the RAG prompt template including conversation history
       const prompt = PromptTemplate.fromTemplate(`
 You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
-Use the following pieces of retrieved context to answer the user's question and provide a recommendation.
-If you don't know the answer or the context doesn't match perfectly, use your general knowledge but mention that it's a broader recommendation.
-Always be conversational, enthusiastic, and helpful.
+Use the following retrieved context to answer the user's question.
+-- Constraints --
+* Be highly concise, brief, and to the point.
+* Limit your recommendation to 2-3 short sentences.
+* Avoid long intros or conversational filler.
+
+
+Conversation History:
+{chat_history}
 
 Context:
 {context}
@@ -47,6 +63,7 @@ Answer:
         {
           context: retriever.pipe(formatDocumentsAsString),
           question: new RunnablePassthrough(),
+          chat_history: () => chatHistoryString,
         },
         prompt,
         this.llm,
@@ -70,14 +87,18 @@ Answer:
   /**
    * Generates a streamed recommendation for real-time typing effect.
    */
-  async streamRecommendation(query: string) {
+  async streamRecommendation(query: string, history?: any[]) {
     const retriever = await this.vectorRepo.getRetriever();
+    const chatHistoryString = formatHistory(history);
 
     const prompt = PromptTemplate.fromTemplate(`
 You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
-Use the following pieces of retrieved context to answer the user's question and provide a recommendation.
+Use the following pieces of retrieved context and conversation history to answer the user's question and provide a recommendation.
 If you don't know the answer or the context doesn't match perfectly, use your general knowledge but mention that it's a broader recommendation.
 Always be conversational, enthusiastic, and helpful.
+
+Conversation History:
+{chat_history}
 
 Context:
 {context}
@@ -90,6 +111,7 @@ Answer:
       {
         context: retriever.pipe(formatDocumentsAsString),
         question: new RunnablePassthrough(),
+        chat_history: () => chatHistoryString,
       },
       prompt,
       this.llm,

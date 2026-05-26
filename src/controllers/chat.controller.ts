@@ -14,7 +14,7 @@ export class ChatController {
   async handleChat(req: NextRequest) {
     try {
       const body = await req.json();
-      const { message } = body;
+      const { message, history } = body;
 
       if (!message) {
         return NextResponse.json(
@@ -25,7 +25,7 @@ export class ChatController {
 
 
       // Handle streaming response
-      const langChainStream = await this.chatService.streamRecommendation(message);
+      const langChainStream = await this.chatService.streamRecommendation(message, history);
       const encoder = new TextEncoder();
 
       const readableStream = new ReadableStream({
@@ -56,7 +56,7 @@ export class ChatController {
 
 
       // Handle standard JSON response
-      const response = await this.chatService.generateRecommendation(message);
+      const response = await this.chatService.generateRecommendation(message, history);
 
       return NextResponse.json({
         status: 'success',
