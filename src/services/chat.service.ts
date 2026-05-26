@@ -3,6 +3,8 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { RunnableSequence, RunnablePassthrough } from '@langchain/core/runnables';
 import { VectorRepository } from '../repositories/vector.repository';
+import { ChatRepository } from '../repositories/chat.repository';
+import { Chat, Message } from '../repositories/types';
 
 const formatDocumentsAsString = (documents: any[]) => 
   documents.map((doc) => doc.pageContent).join("\n\n");
@@ -18,10 +20,12 @@ const formatHistory = (history: any[] = []) => {
 
 export class ChatService {
   private vectorRepo: VectorRepository;
+  private chatRepo: ChatRepository;
   private llm: ChatGoogleGenerativeAI;
 
   constructor() {
     this.vectorRepo = new VectorRepository();
+    this.chatRepo = new ChatRepository();
     
     // Initialize Gemini. Requires GOOGLE_API_KEY environment variable.
     this.llm = new ChatGoogleGenerativeAI({
@@ -30,59 +34,7 @@ export class ChatService {
     });
   }
 
-  /**
-   * Generates a recommendation based on the user's query, optional conversation history, and context from the vector store.
-   */
-  async generateRecommendation(query: string, history?: any[]): Promise<string> {
-    try {
-      const retriever = await this.vectorRepo.getRetriever();
-      const chatHistoryString = formatHistory(history);
 
-      // Define the RAG prompt template including conversation history
-      const prompt = PromptTemplate.fromTemplate(`
-You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
-Use the following retrieved context to answer the user's question.
--- Constraints --
-* Be highly concise, brief, and to the point.
-* Limit your recommendation to 2-3 short sentences.
-* Avoid long intros or conversational filler.
-
-
-Conversation History:
-{chat_history}
-
-Context:
-{context}
-
-User's Request: {question}
-Answer:
-      `);
-
-      // Build the LangChain RunnableSequence
-      const chain = RunnableSequence.from([
-        {
-          context: retriever.pipe(formatDocumentsAsString),
-          question: new RunnablePassthrough(),
-          chat_history: () => chatHistoryString,
-        },
-        prompt,
-        this.llm,
-        new StringOutputParser(),
-      ]);
-
-      return await chain.invoke(query);
-
-    } catch (error: any) {
-      console.error("Error in ChatService:", error);
-      
-      // Provide a fallback response if API keys aren't set up yet during development
-      if (error?.message?.includes('GOOGLE_API_KEY') || error?.status === 401 || error?.message?.includes('API key')) {
-         return "It looks like my Gemini API key hasn't been configured yet! I'm running in offline mode. Once you add `GOOGLE_API_KEY` to the environment variables, I'll be fully operational.";
-      }
-
-      throw error;
-    }
-  }
 
   /**
    * Generates a streamed recommendation for real-time typing effect.
@@ -119,5 +71,72 @@ Answer:
     ]);
 
     return await chain.stream(query);
+  }
+
+  /**
+   * 1. Fetches all active chat sessions created by a specific user.
+   */
+  async getUserConversations(userId: string): Promise<Chat[]> {
+    return this.chatRepo.getUserChats(userId);
+  }
+
+  /**
+   * 2. Retrieves full message history for a specific active chat session with direct database ownership check.
+   */
+  async getConversationHistory(chatId: string, userId: string): Promise<Message[]> {
+    const chat = await this.chatRepo.getUserChat(chatId, userId);
+    if (!chat) {
+      const error = new Error("Conversation not found.");
+      (error as any).statusCode = 404;
+      throw error;
+    }
+    
+    return this.chatRepo.getChatMessages(chatId);
+  }
+
+  /**
+   * 3. Creates a new conversation thread, auto-generating a title from the first message.
+   */
+  async createNewConversation(userId: string, firstMessage: string): Promise<Chat> {
+    // Generate a clean title by slicing the first 35 chars
+    const title = firstMessage.length > 35 
+      ? firstMessage.substring(0, 35).trim() + "..." 
+      : firstMessage.trim();
+      
+    return this.chatRepo.createChat(userId, title || 'New Chat');
+  }
+
+  /**
+   * 4. Saves a user or model message to a specific conversation thread.
+   */
+  async saveChatMessage(
+    chatId: string,
+    role: 'user' | 'model' | 'system',
+    content: string,
+    metadata: Record<string, any> = {}
+  ): Promise<Message> {
+    return this.chatRepo.saveMessage(chatId, role, content, metadata);
+  }
+
+  /**
+   * 5. Updates an active conversation thread's title dynamically with direct database ownership check.
+   */
+  async renameConversation(chatId: string, userId: string, newTitle: string): Promise<boolean> {
+    const chat = await this.chatRepo.getUserChat(chatId, userId);
+    if (!chat) {
+      const error = new Error("Conversation not found.");
+      (error as any).statusCode = 404;
+      throw error;
+    }
+
+    await this.chatRepo.updateChatTitle(chatId, newTitle);
+    return true;
+  }
+
+  /**
+   * 6. Logically deletes a conversation thread and all its messages.
+   */
+  async deleteConversation(chatId: string, userId: string): Promise<boolean> {
+    return this.chatRepo.deleteChat(chatId, userId);
   }
 }
