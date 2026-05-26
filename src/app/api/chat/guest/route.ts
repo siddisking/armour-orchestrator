@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { ChatController } from '../../../controllers/chat.controller';
+import { ChatController } from '../../../../controllers/chat.controller';
 
 const chatController = new ChatController();
 
