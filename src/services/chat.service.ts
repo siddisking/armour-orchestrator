@@ -13,9 +13,14 @@ const formatDocumentsAsString = (documents: any[]) =>
     const statusStr = doc.metadata.status ? `\nStatus: ${doc.metadata.status}` : '';
     const ratingStr = doc.metadata.rating ? `\nRating: ${doc.metadata.rating}` : '';
     const scoreStr = doc.metadata.score ? `\nScore: ${doc.metadata.score}` : '';
+    const imageStr = doc.metadata.image_url ? `\nImage URL: ${doc.metadata.image_url}` : '';
+    const urlStr = doc.metadata.url ? `\nURL: ${doc.metadata.url}` : '';
+    const episodesStr = doc.metadata.episodes ? `\nEpisodes: ${doc.metadata.episodes}` : '';
+    const startStr = doc.metadata.start_date ? `\nStart Date: ${doc.metadata.start_date}` : '';
+    const endStr = doc.metadata.end_date ? `\nEnd Date: ${doc.metadata.end_date}` : '';
     
     const metadataPrefix = "\nMetadata:";
-    const metadataContent = `${yearStr}${studiosStr}${statusStr}${ratingStr}${scoreStr}`;
+    const metadataContent = `${yearStr}${studiosStr}${statusStr}${ratingStr}${scoreStr}${imageStr}${urlStr}${episodesStr}${startStr}${endStr}`;
     
     return `${doc.pageContent}${metadataContent ? metadataPrefix + metadataContent : ''}`;
   }).join("\n\n");
@@ -56,7 +61,6 @@ Analyze the user's search query and extract filters to query metadata fields.
 Available Database Metadata Fields:
 - "year" (number): Release year (e.g. 2026, 2024). ONLY extract if the user is asking for content from or released in that year. Do NOT extract if the year is part of a title (e.g. "2012" the movie).
 - "studios" (string): Producing studio (e.g. Madhouse, Bones).
-- "status" (string): "Finished Airing", "Currently Airing", "Not yet aired".
 - "type" (string): "TV", "Movie", "OVA", "Special".
 
 Respond ONLY with a valid JSON object. Do not include markdown code block formatting or any other text. If no filters apply, return an empty object {}.
@@ -103,6 +107,24 @@ You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
 Use the following pieces of retrieved context and conversation history to answer the user's question and provide a recommendation.
 If you don't know the answer or the context doesn't match perfectly, use your general knowledge but mention that it's a broader recommendation.
 Always be conversational, enthusiastic, and helpful.
+
+-- Formatting Instructions --
+* Always output recommendations strictly inside custom ":::anime-card" block boundaries.
+* For each recommended anime/movie/series, render the details block EXACTLY in the following structure (do NOT modify the keys in brackets):
+:::anime-card
+[Title] Anime Title Here
+[Image] exact_image_url_here
+[Year] Release Year Here
+[Episodes] Episode Count Here (e.g. 28 episodes)
+[StartDate] Airing Start Date Here (e.g. 2023-10-06)
+[EndDate] Airing End Date Here (e.g. 2024-03-22)
+[Studio] Producing Studio Here
+[Status] Airing Status Here (Must display the actual status value from the context metadata, e.g. "Finished Airing", "Currently Airing", or "Not yet aired" - show ALL statuses as recorded!)
+[Score] Score Here (numeric score from metadata, e.g., 9.1 or 8.5)
+[Genres] Action, Fantasy, Comedy (comma separated genres from the context page content)
+[Description] A 2-3 sentence synopsis/explanation describing the show and explaining how it fits the user's OP MC or plot query.
+[MAL] exact_url_here
+:::
 
 Conversation History:
 {chat_history}

@@ -81,6 +81,8 @@ Synopsis: ${record.synopsis}`;
             episodes: parseInt(record.episodes) || null,
             year: parseInt(record.year) || null,
             studios: cleanedStudios,
+            start_date: record.start_date || null,
+            end_date: record.end_date || null,
           };
 
           const docId = uuidv5(record.mal_id.toString(), ANIME_NAMESPACE);
