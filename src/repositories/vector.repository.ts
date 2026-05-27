@@ -44,12 +44,16 @@ export class VectorRepository {
   /**
    * Retrieves the LangChain retriever object connected to PostgreSQL.
    */
-  async getRetriever() {
+  async getRetriever(filter?: Record<string, any>) {
     await this.initStore();
     if (!this.vectorStore) throw new Error("PGVectorStore failed to initialize.");
     
-    // Return top 2 matching documents
-    return this.vectorStore.asRetriever(2);
+    // Return top 4 matching documents with optional metadata filtering
+    return this.vectorStore.asRetriever({
+      searchType: "similarity",
+      k: 4,
+      filter: filter,
+    });
   }
 
   /**
