@@ -20,6 +20,7 @@ export class IngestService {
   async processTVAnimeCSVStream(
     buffer: Buffer, 
     uploadMode: 'overwrite' | 'update', 
+    vectorProvider: 'gemini' | 'qwen' | 'both',
     onProgress: (count: number) => void,
     onLog?: (msg: string) => void
   ): Promise<void> {
@@ -31,6 +32,14 @@ export class IngestService {
       
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+      const repos: VectorRepository[] = [];
+      if (vectorProvider === 'gemini' || vectorProvider === 'both') {
+        repos.push(new VectorRepository('gemini'));
+      }
+      if (vectorProvider === 'qwen' || vectorProvider === 'both') {
+        repos.push(new VectorRepository('qwen'));
+      }
+      
       const parser = parse({
         columns: true,
         skip_empty_lines: true,
@@ -102,19 +111,26 @@ Synopsis: ${record.synopsis}`;
 
             try {
               const prevLength = currentBatch.length;
-              const result = await this.vectorRepo.addDocuments(currentBatch, currentBatchIds, uploadMode);
-              
-              if (onLog && result.skipped > 0) {
-                onLog(`Skipped ${result.skipped} existing records.`);
-              }
-              if (onLog && result.inserted > 0) {
-                onLog(`Embedded and inserted ${result.inserted} new records.`);
+              let totalInserted = 0;
+              let totalSkipped = 0;
+
+              for (const repo of repos) {
+                const result = await repo.addDocuments(currentBatch, currentBatchIds, uploadMode);
+                totalInserted += result.inserted;
+                totalSkipped += result.skipped;
+
+                if (onLog && result.skipped > 0) {
+                  onLog(`[${repo['provider']}] Skipped ${result.skipped} existing records.`);
+                }
+                if (onLog && result.inserted > 0) {
+                  onLog(`[${repo['provider']}] Embedded and inserted ${result.inserted} new records.`);
+                }
               }
               
               count += prevLength; // Approximate progress based on parsed count
               onProgress(count);
               
-              if (result.inserted > 0) {
+              if (totalInserted > 0) {
                 await delay(1000); // Small 1-second breather between giant batches
               }
               
@@ -131,15 +147,15 @@ Synopsis: ${record.synopsis}`;
         // Process any remaining documents in the final batch
         if (batch.length > 0) {
           try {
-            const result = await this.vectorRepo.addDocuments(batch, batchIds, uploadMode);
-            
-            if (onLog && result.skipped > 0) {
-              onLog(`Skipped ${result.skipped} existing records.`);
+            for (const repo of repos) {
+              const result = await repo.addDocuments(batch, batchIds, uploadMode);
+              if (onLog && result.skipped > 0) {
+                onLog(`[${repo['provider']}] Skipped ${result.skipped} existing records.`);
+              }
+              if (onLog && result.inserted > 0) {
+                onLog(`[${repo['provider']}] Embedded and inserted ${result.inserted} new records.`);
+              }
             }
-            if (onLog && result.inserted > 0) {
-              onLog(`Embedded and inserted ${result.inserted} new records.`);
-            }
-            
             count += batch.length;
             onProgress(count);
           } catch (err) {

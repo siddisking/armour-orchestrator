@@ -15,9 +15,10 @@ export class ChatController {
   private async buildChatStreamResponse(
     message: string,
     history: any[],
-    activeChatId: string | null
+    activeChatId: string | null,
+    provider?: 'gemini' | 'siliconflow'
   ): Promise<Response> {
-    const langChainStream = await this.chatService.streamRecommendation(message, history);
+    const langChainStream = await this.chatService.streamRecommendation(message, history, provider);
     const encoder = new TextEncoder();
     const chatService = this.chatService;
 
@@ -70,7 +71,7 @@ export class ChatController {
   async handleChat(req: NextRequest, user: any | null) {
     try {
       const body = await req.json();
-      const { message, history, chatId } = body;
+      const { message, history, chatId, provider } = body;
 
       if (!message) {
         return NextResponse.json(
@@ -81,7 +82,7 @@ export class ChatController {
 
       // Guest Mode (No authenticated user)
       if (!user) {
-        return this.buildChatStreamResponse(message, history || [], null);
+        return this.buildChatStreamResponse(message, history || [], null, provider);
       }
 
       // Member Mode (Authenticated user)
@@ -110,7 +111,7 @@ export class ChatController {
       await this.chatService.saveChatMessage(activeChatId, 'user', message);
 
       // Return the consolidated response stream
-      return this.buildChatStreamResponse(message, memberHistory, activeChatId);
+      return this.buildChatStreamResponse(message, memberHistory, activeChatId, provider);
 
     } catch (error: any) {
       console.error('Chat processing failed:', error);

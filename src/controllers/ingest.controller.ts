@@ -14,6 +14,7 @@ export class IngestController {
       const file = formData.get('file') as File;
       const mediaType = (formData.get('mediaType') as string);
       const uploadMode = (formData.get('uploadMode') as 'overwrite' | 'update') || 'update';
+      const vectorProvider = (formData.get('vectorProvider') as 'gemini' | 'qwen' | 'both') || 'gemini';
 
       if (!file) {
         return NextResponse.json(
@@ -35,7 +36,7 @@ export class IngestController {
             controller.enqueue(encoder.encode('data: {"status":"started","message":"Ingestion started"}\n\n'));
 
             if (mediaType === 'anime') {
-              await service.processTVAnimeCSVStream(buffer, uploadMode, (count) => {
+              await service.processTVAnimeCSVStream(buffer, uploadMode, vectorProvider, (count) => {
                 const progressData = JSON.stringify({ status: 'progress', count });
                 controller.enqueue(encoder.encode(`data: ${progressData}\n\n`));
               }, (msg) => {

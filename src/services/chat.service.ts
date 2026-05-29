@@ -1,4 +1,5 @@
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
+import { ChatOpenAI } from '@langchain/openai';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { RunnableSequence, RunnablePassthrough } from '@langchain/core/runnables';
@@ -35,25 +36,39 @@ const formatHistory = (history: any[] = []) => {
 };
 
 export class ChatService {
-  private vectorRepo: VectorRepository;
+  private geminiVectorRepo: VectorRepository;
+  private siliconflowVectorRepo: VectorRepository;
   private chatRepo: ChatRepository;
-  private llm: ChatGoogleGenerativeAI;
+  private geminiLlm: ChatGoogleGenerativeAI;
+  private siliconflowLlm: ChatOpenAI;
 
   constructor() {
-    this.vectorRepo = new VectorRepository();
+    this.geminiVectorRepo = new VectorRepository('gemini');
+    this.siliconflowVectorRepo = new VectorRepository('qwen');
     this.chatRepo = new ChatRepository();
 
     // Initialize Gemini. Requires GOOGLE_API_KEY environment variable.
-    this.llm = new ChatGoogleGenerativeAI({
+    this.geminiLlm = new ChatGoogleGenerativeAI({
       model: 'gemini-2.5-flash',
+      temperature: 0.3,
+    });
+
+    // Initialize SiliconFlow Qwen/Qwen2.5-7B-Instruct
+    this.siliconflowLlm = new ChatOpenAI({
+      apiKey: process.env.SILICONFLOW_API_KEY || '',
+      configuration: {
+        baseURL: "https://api.siliconflow.com/v1",
+        apiKey: process.env.SILICONFLOW_API_KEY || '', // Nested override
+      },
+      modelName: "Qwen/Qwen2.5-7B-Instruct",
       temperature: 0.3,
     });
   }
 
   /**
-   * Private helper using Gemini to extract structured metadata filters from a natural language query.
+   * Private helper using selected LLM to extract structured metadata filters from a natural language query.
    */
-  private async extractMetadataFilter(query: string): Promise<Record<string, any> | undefined> {
+  private async extractMetadataFilter(query: string, provider: 'gemini' | 'siliconflow' = 'gemini'): Promise<Record<string, any> | undefined> {
     try {
       const prompt = `You are a metadata extraction assistant for a vector database of anime.
 Analyze the user's search query and extract filters to query metadata fields.
@@ -62,6 +77,7 @@ Available Database Metadata Fields:
 - "year" (number): Release year (e.g. 2026, 2024). ONLY extract if the user is asking for content from or released in that year. Do NOT extract if the year is part of a title (e.g. "2012" the movie).
 - "studios" (string): Producing studio (e.g. Madhouse, Bones).
 - "type" (string): "TV", "Movie", "OVA", "Special".
+- "status" (string): Airing status. Use "Finished Airing" if the user asks for completed or finished series/seasons, "Currently Airing" if they ask for ongoing/airing series, and "Not yet aired" if they ask for upcoming series.
 
 Respond ONLY with a valid JSON object. Do not include markdown code block formatting or any other text. If no filters apply, return an empty object {}.
 
@@ -69,8 +85,8 @@ Examples:
 Query: "animes released in 2026"
 Response: {"year": 2026}
 
-Query: "action series by bones studio"
-Response: {"studios": "Bones"}
+Query: "completed action series by bones studio"
+Response: {"studios": "Bones", "status": "Finished Airing"}
 
 Query: "animes like 2012"
 Response: {}
@@ -78,7 +94,8 @@ Response: {}
 Query: "${query.replace(/"/g, '\\"')}"
 Response:`;
 
-      const response = await this.llm.invoke(prompt);
+      const llm = provider === 'siliconflow' ? this.siliconflowLlm : this.geminiLlm;
+      const response = await llm.invoke(prompt);
       const text = typeof response === 'string' ? response : (response as any).content;
       
       const cleanJson = text.trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
@@ -96,10 +113,12 @@ Response:`;
   /**
    * Generates a streamed recommendation for real-time typing effect.
    */
-  async streamRecommendation(query: string, history?: any[]) {
-    const filter = await this.extractMetadataFilter(query);
-    console.log(`[RAG Search] Query: "${query}" | Extracted Metadata Filter:`, filter || 'None');
-    const retriever = await this.vectorRepo.getRetriever(filter);
+  async streamRecommendation(query: string, history?: any[], provider: 'gemini' | 'siliconflow' = 'gemini') {
+    const filter = await this.extractMetadataFilter(query, provider);
+    console.log(`[RAG Search] Provider: ${provider} | Query: "${query}" | Extracted Metadata Filter:`, filter || 'None');
+    
+    const vectorRepo = provider === 'siliconflow' ? this.siliconflowVectorRepo : this.geminiVectorRepo;
+    const retriever = await vectorRepo.getRetriever(filter);
     const chatHistoryString = formatHistory(history);
 
     const prompt = PromptTemplate.fromTemplate(`
@@ -136,6 +155,8 @@ User's Request: {question}
 Answer:
     `);
 
+    const llm = provider === 'siliconflow' ? this.siliconflowLlm : this.geminiLlm;
+
     const chain = RunnableSequence.from([
       {
         context: retriever.pipe(formatDocumentsAsString),
@@ -143,7 +164,7 @@ Answer:
         chat_history: () => chatHistoryString,
       },
       prompt,
-      this.llm,
+      llm,
       new StringOutputParser(),
     ]);
 
