@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ChatController } from '../../../../controllers/chat.controller';
 import jwt from 'jsonwebtoken';
 
-const chatController = new ChatController();
-
 function getUserFromReq(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -28,6 +26,7 @@ export async function GET(
   }
 
   const { id } = context.params;
+  const chatController = new ChatController();
   return chatController.getConversation(req, user, id);
 }
 
@@ -41,6 +40,7 @@ export async function PATCH(
   }
 
   const { id } = context.params;
+  const chatController = new ChatController();
   return chatController.renameConversation(req, user, id);
 }
 
@@ -54,5 +54,6 @@ export async function DELETE(
   }
 
   const { id } = context.params;
+  const chatController = new ChatController();
   return chatController.deleteConversation(req, user, id);
 }

@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ChatController } from '../../../controllers/chat.controller';
 import jwt from 'jsonwebtoken';
 
-const chatController = new ChatController();
-
 export async function POST(req: NextRequest) {
+  const chatController = new ChatController();
   const authHeader = req.headers.get('authorization');
   let user = null;
 
