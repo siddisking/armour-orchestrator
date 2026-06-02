@@ -6,6 +6,7 @@ import { RunnableSequence, RunnablePassthrough } from '@langchain/core/runnables
 import { VectorRepository } from '../repositories/vector.repository';
 import { ChatRepository } from '../repositories/chat.repository';
 import { Chat, Message } from '../repositories/types';
+import { VectorStoreRetriever } from '@langchain/core/vectorstores';
 
 const formatDocumentsAsString = (documents: any[]) =>
   documents.map((doc) => {
@@ -19,10 +20,10 @@ const formatDocumentsAsString = (documents: any[]) =>
     const episodesStr = doc.metadata.episodes ? `\nEpisodes: ${doc.metadata.episodes}` : '';
     const startStr = doc.metadata.start_date ? `\nStart Date: ${doc.metadata.start_date}` : '';
     const endStr = doc.metadata.end_date ? `\nEnd Date: ${doc.metadata.end_date}` : '';
-    
+
     const metadataPrefix = "\nMetadata:";
     const metadataContent = `${yearStr}${studiosStr}${statusStr}${ratingStr}${scoreStr}${imageStr}${urlStr}${episodesStr}${startStr}${endStr}`;
-    
+
     return `${doc.pageContent}${metadataContent ? metadataPrefix + metadataContent : ''}`;
   }).join("\n\n");
 
@@ -97,10 +98,10 @@ Response:`;
       const llm = provider === 'siliconflow' ? this.siliconflowLlm : this.geminiLlm;
       const response = await llm.invoke(prompt);
       const text = typeof response === 'string' ? response : (response as any).content;
-      
+
       const cleanJson = text.trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
       const filter = JSON.parse(cleanJson);
-      
+
       if (filter && Object.keys(filter).length > 0) {
         return filter;
       }
@@ -110,20 +111,59 @@ Response:`;
     return undefined;
   }
 
+  private async createConversationSummary(history: any[], query: string, provider: string): Promise<string> {
+    try {
+      const prompt = `Given the following chat history and a follow-up user query, rewrite the follow-up query to be a standalone, fully self-contained search query suitable for semantic vector database retrieval. The rewritten query should preserve the original search intent, replacing pronouns (like "them", "it", "that", "these", "those") with the specific anime titles, genres, or concepts referenced in the history.
+Do not explain, do not add metadata labels, and do not answer the query. Output ONLY the rewritten search query.
+
+**Chat History:**
+${formatHistory(history)}
+
+**Follow-up User Query:**
+${query}
+
+**Standalone Search Query:**`;
+
+      const llm = provider === 'siliconflow' ? this.siliconflowLlm : this.geminiLlm;
+      const response = await llm.invoke(prompt);
+      const text = typeof response === 'string' ? response : (response as any).content;
+      return text.trim();
+    }
+    catch (error) {
+      console.warn("Failed to create conversation summary:", error);
+      return query;
+    }
+
+  }
+
   /**
    * Generates a streamed recommendation for real-time typing effect.
    */
   async streamRecommendation(query: string, history?: any[], provider: 'gemini' | 'siliconflow' = 'gemini') {
-    const filter = await this.extractMetadataFilter(query, provider);
-    console.log(`[RAG Search] Provider: ${provider} | Query: "${query}" | Extracted Metadata Filter:`, filter || 'None');
-    
+    // 1. Generate reformulated search query if history exists (skipping first message turn)
+    let reformulatedQuery = query;
+    const recentHistory = history ? history.slice(-5) : [];
+    if (recentHistory.length > 0) {
+      reformulatedQuery = await this.createConversationSummary(recentHistory, query, provider);
+      console.log(`[RAG CQR] Original Query: "${query}" | Reformulated: "${reformulatedQuery}"`);
+    }
+
+
+    // 2. Extract metadata filters using the reformulated query
+    const filter = await this.extractMetadataFilter(reformulatedQuery, provider);
+    console.log(`[RAG Search] Provider: ${provider} | Target Query: "${reformulatedQuery}" | Extracted Metadata Filter:`, filter || 'None');
+
     const vectorRepo = provider === 'siliconflow' ? this.siliconflowVectorRepo : this.geminiVectorRepo;
     const retriever = await vectorRepo.getRetriever(filter);
     const chatHistoryString = formatHistory(history);
 
+    // 3. Retrieve context documents using the reformulated search query instead of the raw query
+    const contextDocs = await retriever.invoke(reformulatedQuery);
+    const contextString = formatDocumentsAsString(contextDocs);
+
     const prompt = PromptTemplate.fromTemplate(`
 You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
-Use the following pieces of retrieved context and conversation history to answer the user's question and provide a recommendation.
+Use the following pieces of retrieved context and conversation history and conversation summary to answer the user's question and provide a recommendation.
 If you don't know the answer or the context doesn't match perfectly, use your general knowledge but mention that it's a broader recommendation.
 Always be conversational, enthusiastic, and helpful.
 
@@ -148,6 +188,9 @@ Always be conversational, enthusiastic, and helpful.
 Conversation History:
 {chat_history}
 
+Conversation Summary / Reformulated Query:
+{conversationSummary}
+
 Context:
 {context}
 
@@ -159,9 +202,10 @@ Answer:
 
     const chain = RunnableSequence.from([
       {
-        context: retriever.pipe(formatDocumentsAsString),
+        context: () => contextString,
         question: new RunnablePassthrough(),
         chat_history: () => chatHistoryString,
+        conversationSummary: () => reformulatedQuery,
       },
       prompt,
       llm,
