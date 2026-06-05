@@ -1,5 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { ChatService } from '../services/chat.service';
+import { ModelId, normalizeModelId, CHAT_INTENTS, ChatIntent } from '../utils/constant';
+import { AuthUser } from '../repositories/types';
 
 export class ChatController {
   private chatService: ChatService;
@@ -16,9 +18,12 @@ export class ChatController {
     message: string,
     history: any[],
     activeChatId: string | null,
-    provider?: 'gemini' | 'siliconflow'
+    modelId: ModelId,
+    intent: ChatIntent
   ): Promise<Response> {
-    const langChainStream = await this.chatService.streamRecommendation(message, history, provider);
+    const langChainStream = intent === CHAT_INTENTS.DIRECT_CHAT
+      ? await this.chatService.streamDirectChat(message, history, modelId)
+      : await this.chatService.streamRecommendation(message, history, modelId);
     const encoder = new TextEncoder();
     const chatService = this.chatService;
 
@@ -33,8 +38,8 @@ export class ChatController {
             controller.enqueue(encoder.encode(chunk));
           }
           if (activeChatId) {
-            // Save model response to database upon successful completion
-            await chatService.saveChatMessage(activeChatId, 'model', accumulatedResponse);
+            // Save model response to database upon successful completion with intent in metadata
+            await chatService.saveChatMessage(activeChatId, 'model', accumulatedResponse, { intent });
           }
           controller.close();
         } catch (err: any) {
@@ -42,7 +47,7 @@ export class ChatController {
             const fallback = "It looks like my Gemini API key hasn't been configured yet! I'm running in offline mode. Once you add `GOOGLE_API_KEY` to the environment variables, I'll be fully operational.";
             controller.enqueue(encoder.encode(fallback));
             if (activeChatId) {
-              await chatService.saveChatMessage(activeChatId, 'model', fallback);
+              await chatService.saveChatMessage(activeChatId, 'model', fallback, { intent });
             }
             controller.close();
           } else {
@@ -68,10 +73,10 @@ export class ChatController {
   /**
    * Handles POST requests for the unified chat endpoint (stateful member or stateless guest).
    */
-  async handleChat(req: NextRequest, user: any | null) {
+  async handleChat(req: NextRequest, user: AuthUser | null) {
     try {
       const body = await req.json();
-      const { message, history, chatId, provider } = body;
+      const { message, history, chatId, provider, model } = body;
 
       if (!message) {
         return NextResponse.json(
@@ -80,9 +85,13 @@ export class ChatController {
         );
       }
 
+      const requestedModel = model || provider || '';
+      const modelId = normalizeModelId(requestedModel);
+
       // Guest Mode (No authenticated user)
       if (!user) {
-        return this.buildChatStreamResponse(message, history || [], null, provider);
+        const intent = await this.chatService.routeIntent(message, modelId);
+        return this.buildChatStreamResponse(message, history || [], null, modelId, intent);
       }
 
       // Member Mode (Authenticated user)
@@ -107,11 +116,14 @@ export class ChatController {
         activeChatId = newChat.id;
       }
 
-      // Save the incoming user message to PostgreSQL
-      await this.chatService.saveChatMessage(activeChatId, 'user', message);
+      // Route the intent first
+      const intent = await this.chatService.routeIntent(message, modelId);
+
+      // Save the incoming user message to PostgreSQL with the deduced intent metadata
+      await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent });
 
       // Return the consolidated response stream
-      return this.buildChatStreamResponse(message, memberHistory, activeChatId, provider);
+      return this.buildChatStreamResponse(message, memberHistory, activeChatId, modelId, intent);
 
     } catch (error: any) {
       console.error('Chat processing failed:', error);
@@ -126,7 +138,7 @@ export class ChatController {
    * GET /api/conversations
    * Fetches all active, non-deleted chat threads belonging to the authenticated user.
    */
-  async listConversations(req: NextRequest, user: any) {
+  async listConversations(req: NextRequest, user: AuthUser) {
     try {
       const conversations = await this.chatService.getUserConversations(user.id);
       return NextResponse.json(conversations);
@@ -140,7 +152,7 @@ export class ChatController {
    * GET /api/conversations/[id]
    * Fetches chronological message history for an active chat thread with user verification.
    */
-  async getConversation(req: NextRequest, user: any, chatId: string) {
+  async getConversation(req: NextRequest, user: AuthUser, chatId: string) {
     try {
       const messages = await this.chatService.getConversationHistory(chatId, user.id);
       return NextResponse.json(messages);
@@ -157,7 +169,7 @@ export class ChatController {
    * PATCH /api/conversations/[id]
    * Updates an active conversation thread's title.
    */
-  async renameConversation(req: NextRequest, user: any, chatId: string) {
+  async renameConversation(req: NextRequest, user: AuthUser, chatId: string) {
     try {
       const { title } = await req.json();
       if (!title || !title.trim()) {
@@ -178,7 +190,7 @@ export class ChatController {
    * DELETE /api/conversations/[id]
    * Performs a logical soft delete of an active conversation thread.
    */
-  async deleteConversation(req: NextRequest, user: any, chatId: string) {
+  async deleteConversation(req: NextRequest, user: AuthUser, chatId: string) {
     try {
       const success = await this.chatService.deleteConversation(chatId, user.id);
       if (!success) {

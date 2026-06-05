@@ -4,30 +4,46 @@ import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { PoolConfig } from 'pg';
 import { pool } from '../lib/db';
+import { SUPPORTED_MODELS, ModelId, MODEL_REGISTRY, PROVIDERS } from '../utils/constant';
 
 export class VectorRepository {
   private vectorStore: PGVectorStore | null = null;
   private embeddings: any;
-  private provider: 'gemini' | 'qwen';
+  private modelId: ModelId;
+  private tableName: string;
 
-  constructor(provider: 'gemini' | 'qwen' = 'gemini') {
-    this.provider = provider;
-    if (this.provider === 'qwen') {
+  get model(): ModelId {
+    return this.modelId;
+  }
+
+  get provider(): string {
+    return MODEL_REGISTRY[this.modelId].provider;
+  }
+
+  constructor(modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH) {
+    this.modelId = modelId;
+    const config = MODEL_REGISTRY[modelId];
+    this.tableName = config.tableName;
+
+    if (config.provider === PROVIDERS.SILICONFLOW) {
       this.embeddings = new OpenAIEmbeddings({
         apiKey: process.env.SILICONFLOW_API_KEY || '',
         openAIApiKey: process.env.SILICONFLOW_API_KEY || '', // Compatibility fallback
-        modelName: "Qwen/Qwen3-Embedding-0.6B",
+        modelName: config.embeddingModel,
         configuration: {
-          baseURL: "https://api.siliconflow.com/v1",
+          baseURL: config.baseURL,
           apiKey: process.env.SILICONFLOW_API_KEY || '', // Nested override to prevent SDK fallback to OPENAI_API_KEY
         },
       });
     } else {
       this.embeddings = new GoogleGenerativeAIEmbeddings({
-        model: "gemini-embedding-2",
+        model: config.embeddingModel,
       });
     }
+
   }
+
+
 
   /**
    * Initializes the PostgreSQL vector store.
@@ -39,7 +55,7 @@ export class VectorRepository {
       connectionString: process.env.DATABASE_URL,
     };
 
-    const tableName = this.provider === 'qwen' ? "anime_documents_qwen" : "anime_documents";
+    const tableName = this.tableName;
 
     // Initialize the vector store. This automatically creates the extension and table if needed.
     this.vectorStore = await PGVectorStore.initialize(this.embeddings, {
@@ -79,7 +95,7 @@ export class VectorRepository {
     await this.initStore();
     if (!this.vectorStore) throw new Error("PGVectorStore failed to initialize.");
     
-    const tableName = this.provider === 'qwen' ? "anime_documents_qwen" : "anime_documents";
+    const tableName = this.tableName;
     let skippedCount = 0;
     
     // Check which ones exist for 'update' mode
@@ -122,7 +138,7 @@ export class VectorRepository {
       }
     }
     try {
-      console.log(`Generating embeddings using ${this.provider} for batch...`);
+      console.log(`Generating embeddings using ${this.modelId} for batch...`);
       const texts = documents.map(doc => doc.pageContent);
       
       let embeddings: number[][] = [];

@@ -7,6 +7,19 @@ import { VectorRepository } from '../repositories/vector.repository';
 import { ChatRepository } from '../repositories/chat.repository';
 import { Chat, Message } from '../repositories/types';
 import { VectorStoreRetriever } from '@langchain/core/vectorstores';
+import {
+  SUPPORTED_MODELS,
+  ModelId,
+  MODEL_REGISTRY,
+  PROVIDERS,
+  CHAT_INTENTS,
+  ChatIntent,
+  getRouteIntentPrompt,
+  getMetadataFilterPrompt,
+  getConversationSummaryPrompt,
+  RECOMMENDATION_PROMPT_TEMPLATE,
+  DIRECT_CHAT_PROMPT_TEMPLATE,
+} from '../utils/constant';
 
 const formatDocumentsAsString = (documents: any[]) =>
   documents.map((doc) => {
@@ -44,24 +57,27 @@ export class ChatService {
   private siliconflowLlm: ChatOpenAI;
 
   constructor() {
-    this.geminiVectorRepo = new VectorRepository('gemini');
-    this.siliconflowVectorRepo = new VectorRepository('qwen');
+    this.geminiVectorRepo = new VectorRepository(SUPPORTED_MODELS.GEMINI_FLASH);
+    this.siliconflowVectorRepo = new VectorRepository(SUPPORTED_MODELS.QWEN_7B);
     this.chatRepo = new ChatRepository();
 
     // Initialize Gemini. Requires GOOGLE_API_KEY environment variable.
+    const geminiConfig = MODEL_REGISTRY[SUPPORTED_MODELS.GEMINI_FLASH];
     this.geminiLlm = new ChatGoogleGenerativeAI({
-      model: 'gemini-2.5-flash',
+      model: geminiConfig.textModel,
       temperature: 0.3,
     });
 
+
     // Initialize SiliconFlow Qwen/Qwen2.5-7B-Instruct
+    const config = MODEL_REGISTRY[SUPPORTED_MODELS.QWEN_7B];
     this.siliconflowLlm = new ChatOpenAI({
       apiKey: process.env.SILICONFLOW_API_KEY || '',
       configuration: {
-        baseURL: "https://api.siliconflow.com/v1",
+        baseURL: config.baseURL,
         apiKey: process.env.SILICONFLOW_API_KEY || '', // Nested override
       },
-      modelName: "Qwen/Qwen2.5-7B-Instruct",
+      modelName: config.textModel,
       temperature: 0.3,
     });
   }
@@ -69,33 +85,12 @@ export class ChatService {
   /**
    * Private helper using selected LLM to extract structured metadata filters from a natural language query.
    */
-  private async extractMetadataFilter(query: string, provider: 'gemini' | 'siliconflow' = 'gemini'): Promise<Record<string, any> | undefined> {
+  private async extractMetadataFilter(query: string, modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH): Promise<Record<string, any> | undefined> {
     try {
-      const prompt = `You are a metadata extraction assistant for a vector database of anime.
-Analyze the user's search query and extract filters to query metadata fields.
+      const prompt = getMetadataFilterPrompt(query);
+      const config = MODEL_REGISTRY[modelId];
 
-Available Database Metadata Fields:
-- "year" (number): Release year (e.g. 2026, 2024). ONLY extract if the user is asking for content from or released in that year. Do NOT extract if the year is part of a title (e.g. "2012" the movie).
-- "studios" (string): Producing studio (e.g. Madhouse, Bones).
-- "type" (string): "TV", "Movie", "OVA", "Special".
-- "status" (string): Airing status. Use "Finished Airing" if the user asks for completed or finished series/seasons, "Currently Airing" if they ask for ongoing/airing series, and "Not yet aired" if they ask for upcoming series.
-
-Respond ONLY with a valid JSON object. Do not include markdown code block formatting or any other text. If no filters apply, return an empty object {}.
-
-Examples:
-Query: "animes released in 2026"
-Response: {"year": 2026}
-
-Query: "completed action series by bones studio"
-Response: {"studios": "Bones", "status": "Finished Airing"}
-
-Query: "animes like 2012"
-Response: {}
-
-Query: "${query.replace(/"/g, '\\"')}"
-Response:`;
-
-      const llm = provider === 'siliconflow' ? this.siliconflowLlm : this.geminiLlm;
+      const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
       const response = await llm.invoke(prompt);
       const text = typeof response === 'string' ? response : (response as any).content;
 
@@ -111,20 +106,12 @@ Response:`;
     return undefined;
   }
 
-  private async createConversationSummary(history: any[], query: string, provider: string): Promise<string> {
+  private async createConversationSummary(history: any[], query: string, modelId: ModelId): Promise<string> {
     try {
-      const prompt = `Given the following chat history and a follow-up user query, rewrite the follow-up query to be a standalone, fully self-contained search query suitable for semantic vector database retrieval. The rewritten query should preserve the original search intent, replacing pronouns (like "them", "it", "that", "these", "those") with the specific anime titles, genres, or concepts referenced in the history.
-Do not explain, do not add metadata labels, and do not answer the query. Output ONLY the rewritten search query.
+      const prompt = getConversationSummaryPrompt(formatHistory(history), query);
+      const config = MODEL_REGISTRY[modelId];
 
-**Chat History:**
-${formatHistory(history)}
-
-**Follow-up User Query:**
-${query}
-
-**Standalone Search Query:**`;
-
-      const llm = provider === 'siliconflow' ? this.siliconflowLlm : this.geminiLlm;
+      const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
       const response = await llm.invoke(prompt);
       const text = typeof response === 'string' ? response : (response as any).content;
       return text.trim();
@@ -136,24 +123,48 @@ ${query}
 
   }
 
+  async routeIntent(query: string, modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH): Promise<ChatIntent> {
+    try {
+      const prompt = getRouteIntentPrompt(query);
+      const config = MODEL_REGISTRY[modelId];
+
+      const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+      const response = await llm.invoke(prompt);
+      const text = (typeof response === 'string' ? response : (response as any).content).trim();
+      const cleaned = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/, '').trim();
+
+      if (cleaned === CHAT_INTENTS.DIRECT_CHAT || cleaned === CHAT_INTENTS.VECTOR_SEARCH) {
+        console.log(`[Route Intent] Deduced intent: "${cleaned}" for query: "${query}"`);
+        return cleaned as ChatIntent;
+      }
+      console.log(`[Route Intent] Deduced fallback intent: "${CHAT_INTENTS.DIRECT_CHAT}" (unrecognized intent format: "${cleaned}") for query: "${query}"`);
+      return CHAT_INTENTS.DIRECT_CHAT;
+    } catch (error) {
+      console.warn("Failed to route intent:", error);
+    }
+    return CHAT_INTENTS.DIRECT_CHAT;
+  }
+
   /**
    * Generates a streamed recommendation for real-time typing effect.
    */
-  async streamRecommendation(query: string, history?: any[], provider: 'gemini' | 'siliconflow' = 'gemini') {
+  async streamRecommendation(query: string, history?: any[], modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH) {
+    const config = MODEL_REGISTRY[modelId];
+
     // 1. Generate reformulated search query if history exists (skipping first message turn)
     let reformulatedQuery = query;
     const recentHistory = history ? history.slice(-5) : [];
     if (recentHistory.length > 0) {
-      reformulatedQuery = await this.createConversationSummary(recentHistory, query, provider);
+      reformulatedQuery = await this.createConversationSummary(recentHistory, query, modelId);
       console.log(`[RAG CQR] Original Query: "${query}" | Reformulated: "${reformulatedQuery}"`);
     }
 
 
     // 2. Extract metadata filters using the reformulated query
-    const filter = await this.extractMetadataFilter(reformulatedQuery, provider);
-    console.log(`[RAG Search] Provider: ${provider} | Target Query: "${reformulatedQuery}" | Extracted Metadata Filter:`, filter || 'None');
+    const filter = await this.extractMetadataFilter(reformulatedQuery, modelId);
+    console.log(`[RAG Search] Model: ${modelId} | Target Query: "${reformulatedQuery}" | Extracted Metadata Filter:`, filter || 'None');
 
-    const vectorRepo = provider === 'siliconflow' ? this.siliconflowVectorRepo : this.geminiVectorRepo;
+    const vectorRepo = config.id === SUPPORTED_MODELS.QWEN_7B ? this.siliconflowVectorRepo : this.geminiVectorRepo;
     const retriever = await vectorRepo.getRetriever(filter);
     const chatHistoryString = formatHistory(history);
 
@@ -161,44 +172,9 @@ ${query}
     const contextDocs = await retriever.invoke(reformulatedQuery);
     const contextString = formatDocumentsAsString(contextDocs);
 
-    const prompt = PromptTemplate.fromTemplate(`
-You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
-Use the following pieces of retrieved context and conversation history and conversation summary to answer the user's question and provide a recommendation.
-If you don't know the answer or the context doesn't match perfectly, use your general knowledge but mention that it's a broader recommendation.
-Always be conversational, enthusiastic, and helpful.
+    const prompt = PromptTemplate.fromTemplate(RECOMMENDATION_PROMPT_TEMPLATE);
 
--- Formatting Instructions --
-* Always output recommendations strictly inside custom ":::anime-card" block boundaries.
-* For each recommended anime/movie/series, render the details block EXACTLY in the following structure (do NOT modify the keys in brackets):
-:::anime-card
-[Title] Anime Title Here
-[Image] exact_image_url_here
-[Year] Release Year Here
-[Episodes] Episode Count Here (e.g. 28 episodes)
-[StartDate] Airing Start Date Here (e.g. 2023-10-06)
-[EndDate] Airing End Date Here (e.g. 2024-03-22)
-[Studio] Producing Studio Here
-[Status] Airing Status Here (Must display the actual status value from the context metadata, e.g. "Finished Airing", "Currently Airing", or "Not yet aired" - show ALL statuses as recorded!)
-[Score] Score Here (numeric score from metadata, e.g., 9.1 or 8.5)
-[Genres] Action, Fantasy, Comedy (comma separated genres from the context page content)
-[Description] A 2-3 sentence synopsis/explanation describing the show and explaining how it fits the user's OP MC or plot query.
-[MAL] exact_url_here
-:::
-
-Conversation History:
-{chat_history}
-
-Conversation Summary / Reformulated Query:
-{conversationSummary}
-
-Context:
-{context}
-
-User's Request: {question}
-Answer:
-    `);
-
-    const llm = provider === 'siliconflow' ? this.siliconflowLlm : this.geminiLlm;
+    const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
 
     const chain = RunnableSequence.from([
       {
@@ -206,6 +182,28 @@ Answer:
         question: new RunnablePassthrough(),
         chat_history: () => chatHistoryString,
         conversationSummary: () => reformulatedQuery,
+      },
+      prompt,
+      llm,
+      new StringOutputParser(),
+    ]);
+
+    return await chain.stream(query);
+  }
+
+  /**
+   * Streams a direct reply for casual conversations or non-vector searches.
+   */
+  async streamDirectChat(query: string, history?: any[], modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH) {
+    const config = MODEL_REGISTRY[modelId];
+    const chatHistoryString = formatHistory(history);
+    const prompt = PromptTemplate.fromTemplate(DIRECT_CHAT_PROMPT_TEMPLATE);
+    const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+
+    const chain = RunnableSequence.from([
+      {
+        question: new RunnablePassthrough(),
+        chat_history: () => chatHistoryString,
       },
       prompt,
       llm,

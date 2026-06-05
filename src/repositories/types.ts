@@ -25,3 +25,10 @@ export interface Message {
   metadata: Record<string, any>;
   created_at: Date;
 }
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  role: string;
+}
+

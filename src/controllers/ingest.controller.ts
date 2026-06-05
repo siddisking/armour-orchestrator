@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { IngestService } from '../services/ingest.service';
+import { SUPPORTED_MODELS, INGESTION_TARGETS } from '../utils/constant';
 
 export class IngestController {
   private ingestService: IngestService;
@@ -14,7 +15,11 @@ export class IngestController {
       const file = formData.get('file') as File;
       const mediaType = (formData.get('mediaType') as string);
       const uploadMode = (formData.get('uploadMode') as 'overwrite' | 'update') || 'update';
-      const vectorProvider = (formData.get('vectorProvider') as 'gemini' | 'qwen' | 'both') || 'gemini';
+      const rawProvider = (formData.get('vectorProvider') as string) || INGESTION_TARGETS.GEMINI;
+      const vectorProvider =
+        rawProvider === SUPPORTED_MODELS.QWEN_7B || rawProvider === INGESTION_TARGETS.QWEN
+          ? INGESTION_TARGETS.QWEN
+          : (rawProvider === INGESTION_TARGETS.BOTH ? INGESTION_TARGETS.BOTH : INGESTION_TARGETS.GEMINI);
 
       if (!file) {
         return NextResponse.json(

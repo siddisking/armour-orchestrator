@@ -2,6 +2,7 @@ import { Document } from '@langchain/core/documents';
 import { parse } from 'csv-parse';
 import { v5 as uuidv5 } from 'uuid';
 import { VectorRepository } from '../repositories/vector.repository';
+import { SUPPORTED_MODELS, INGESTION_TARGETS } from '../utils/constant';
 
 // We use a custom namespace for our PlotArmour AI anime dataset
 const ANIME_NAMESPACE = '1b671a64-40d5-491e-99b0-da01ff1f3341';
@@ -33,11 +34,11 @@ export class IngestService {
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
       const repos: VectorRepository[] = [];
-      if (vectorProvider === 'gemini' || vectorProvider === 'both') {
-        repos.push(new VectorRepository('gemini'));
+      if (vectorProvider === INGESTION_TARGETS.GEMINI || vectorProvider === INGESTION_TARGETS.BOTH) {
+        repos.push(new VectorRepository(SUPPORTED_MODELS.GEMINI_FLASH));
       }
-      if (vectorProvider === 'qwen' || vectorProvider === 'both') {
-        repos.push(new VectorRepository('qwen'));
+      if (vectorProvider === INGESTION_TARGETS.QWEN || vectorProvider === INGESTION_TARGETS.BOTH) {
+        repos.push(new VectorRepository(SUPPORTED_MODELS.QWEN_7B));
       }
       
       const parser = parse({
@@ -120,10 +121,10 @@ Synopsis: ${record.synopsis}`;
                 totalSkipped += result.skipped;
 
                 if (onLog && result.skipped > 0) {
-                  onLog(`[${repo['provider']}] Skipped ${result.skipped} existing records.`);
+                  onLog(`[${repo.provider}] Skipped ${result.skipped} existing records.`);
                 }
                 if (onLog && result.inserted > 0) {
-                  onLog(`[${repo['provider']}] Embedded and inserted ${result.inserted} new records.`);
+                  onLog(`[${repo.provider}] Embedded and inserted ${result.inserted} new records.`);
                 }
               }
               
@@ -150,10 +151,10 @@ Synopsis: ${record.synopsis}`;
             for (const repo of repos) {
               const result = await repo.addDocuments(batch, batchIds, uploadMode);
               if (onLog && result.skipped > 0) {
-                onLog(`[${repo['provider']}] Skipped ${result.skipped} existing records.`);
+                onLog(`[${repo.provider}] Skipped ${result.skipped} existing records.`);
               }
               if (onLog && result.inserted > 0) {
-                onLog(`[${repo['provider']}] Embedded and inserted ${result.inserted} new records.`);
+                onLog(`[${repo.provider}] Embedded and inserted ${result.inserted} new records.`);
               }
             }
             count += batch.length;
