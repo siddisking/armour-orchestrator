@@ -16,6 +16,7 @@ export interface ModelMetadata {
   textModel: string;
   embeddingModel: string;
   tableName: string;
+  dimensions: number;
   baseURL?: string;
 }
 
@@ -26,13 +27,15 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
     textModel: 'gemini-2.5-flash',
     embeddingModel: 'gemini-embedding-2',
     tableName: 'anime_documents',
+    dimensions: 768,
   },
   [SUPPORTED_MODELS.QWEN_7B]: {
     id: SUPPORTED_MODELS.QWEN_7B,
     provider: PROVIDERS.SILICONFLOW,
-    textModel: 'Qwen/Qwen2.5-7B-Instruct',
+    textModel: 'Qwen/Qwen2.5-72B-Instruct',
     embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
     tableName: 'anime_documents_qwen',
+    dimensions: 1024,
     baseURL: 'https://api.siliconflow.com/v1',
   },
 };
@@ -48,6 +51,29 @@ export const INGESTION_TARGETS = {
   GEMINI: 'gemini',
   QWEN: 'qwen',
   BOTH: 'both',
+} as const;
+
+export const MEDIA_TYPES = {
+  ANIME: 'anime',
+  MOVIES: 'movies',
+  SERIES: 'series',
+} as const;
+
+export type MediaType = typeof MEDIA_TYPES[keyof typeof MEDIA_TYPES];
+
+export const MEDIA_TABLES = {
+  [MEDIA_TYPES.ANIME]: {
+    [PROVIDERS.GEMINI]: 'anime_documents',
+    [PROVIDERS.SILICONFLOW]: 'anime_documents_qwen',
+  },
+  [MEDIA_TYPES.MOVIES]: {
+    [PROVIDERS.GEMINI]: 'movie_documents',
+    [PROVIDERS.SILICONFLOW]: 'movie_documents_qwen',
+  },
+  [MEDIA_TYPES.SERIES]: {
+    [PROVIDERS.GEMINI]: 'series_documents',
+    [PROVIDERS.SILICONFLOW]: 'series_documents_qwen',
+  },
 } as const;
 
 export const normalizeModelId = (input: string): ModelId => {
@@ -66,12 +92,14 @@ export const normalizeModelId = (input: string): ModelId => {
  */
 export const getRouteIntentPrompt = (query: string): string => {
   const sanitizedQuery = query.replace(/"/g, '\\"');
-  return `You are a query classifier for an anime recommendation assistant.
-Analyze the user's search query and classify it into one of these two intents:
-- "DIRECT_CHAT": General questions, definitions of concepts, explanations, greetings, or casual talk (e.g. "What is an Isekai anime?", "Who are you?", "Explain what is Shonen").
-- "VECTOR_SEARCH": Queries seeking anime recommendations, suggestions based on plots, themes, characters, or similarities (e.g. "Recommend a dark fantasy anime", "Suggest an anime with OP MC").
+  return `You are a query classifier for an AI recommendation assistant.
+Classify the user's query into exactly one of these two intents:
+1. "VECTOR_SEARCH": Use this if the user is asking for recommendations, suggestions, lists of anime/movies/series, or describing a plot/characters/themes they want to find.
+   - Example: "suggest me isekai anime", "recommend a good romance show", "anime where mc is op", "looking for an anime about space"
+2. "DIRECT_CHAT": Use this if the user is greeting you, asking generic questions, defining concepts, explaining terms, or having a casual conversation.
+   - Example: "hello", "what is an isekai?", "explain what shonen means", "who are you?"
 
-Respond with ONLY the string "DIRECT_CHAT" or "VECTOR_SEARCH". Do not include markdown formatting, punctuation, or any other explanation.
+Output ONLY the word "DIRECT_CHAT" or "VECTOR_SEARCH" (without quotes or punctuation). Do not add any explanation.
 
 Query: "${sanitizedQuery}"
 Response:`;
@@ -162,7 +190,7 @@ Always be conversational, enthusiastic, and helpful.
 [Title] Anime Title Here
 [Image] exact_image_url_here
 [Year] Release Year Here
-[Episodes] Episode Count Here (e.g. 28 episodes)
+[Episodes] Episode Count or Runtime Here (e.g. 28 episodes for series, or 148 min for movies)
 [StartDate] Airing Start Date Here (e.g. 2023-10-06)
 [EndDate] Airing End Date Here (e.g. 2024-03-22)
 [Studio] Producing Studio Here

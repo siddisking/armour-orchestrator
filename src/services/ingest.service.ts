@@ -2,10 +2,13 @@ import { Document } from '@langchain/core/documents';
 import { parse } from 'csv-parse';
 import { v5 as uuidv5 } from 'uuid';
 import { VectorRepository } from '../repositories/vector.repository';
-import { SUPPORTED_MODELS, INGESTION_TARGETS } from '../utils/constant';
+import { SUPPORTED_MODELS, INGESTION_TARGETS, MEDIA_TYPES, MediaType } from '../utils/constant';
 
 // We use a custom namespace for our PlotArmour AI anime dataset
 const ANIME_NAMESPACE = '1b671a64-40d5-491e-99b0-da01ff1f3341';
+
+// Custom namespace for movies dataset
+const MOVIE_NAMESPACE = '2c3c6a64-40d5-491e-99b0-da01ff1f3342';
 
 export class IngestService {
   private vectorRepo: VectorRepository;
@@ -19,8 +22,8 @@ export class IngestService {
    * Calls onProgress with the total count of documents processed so far.
    */
   async processTVAnimeCSVStream(
-    buffer: Buffer, 
-    uploadMode: 'overwrite' | 'update', 
+    buffer: Buffer,
+    uploadMode: 'overwrite' | 'update',
     vectorProvider: 'gemini' | 'qwen' | 'both',
     onProgress: (count: number) => void,
     onLog?: (msg: string) => void
@@ -30,7 +33,7 @@ export class IngestService {
       let batch: Document[] = [];
       let batchIds: string[] = [];
       const BATCH_SIZE = 1000; // Increased batch size for Pay-As-You-Go speed
-      
+
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
       const repos: VectorRepository[] = [];
@@ -40,7 +43,7 @@ export class IngestService {
       if (vectorProvider === INGESTION_TARGETS.QWEN || vectorProvider === INGESTION_TARGETS.BOTH) {
         repos.push(new VectorRepository(SUPPORTED_MODELS.QWEN_7B));
       }
-      
+
       const parser = parse({
         columns: true,
         skip_empty_lines: true,
@@ -127,14 +130,14 @@ Synopsis: ${record.synopsis}`;
                   onLog(`[${repo.provider}] Embedded and inserted ${result.inserted} new records.`);
                 }
               }
-              
+
               count += prevLength; // Approximate progress based on parsed count
               onProgress(count);
-              
+
               if (totalInserted > 0) {
                 await delay(1000); // Small 1-second breather between giant batches
               }
-              
+
               parser.resume();
             } catch (err) {
               parser.destroy(err as Error);
@@ -187,9 +190,151 @@ Synopsis: ${record.synopsis}`;
 
   /**
    * Processes a Movies CSV buffer (Hollywood format).
-   * TODO: Implement specific parsing logic for Movies.
    */
-  async processMovieCSVStream(buffer: Buffer, uploadMode: 'overwrite' | 'update', onProgress: (count: number) => void): Promise<void> {
-    throw new Error("processMovieCSVStream is not yet implemented.");
+  async processMovieCSVStream(
+    buffer: Buffer,
+    uploadMode: 'overwrite' | 'update',
+    vectorProvider: 'gemini' | 'qwen' | 'both',
+    onProgress: (count: number) => void,
+    onLog?: (msg: string) => void
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let count = 0;
+      let batch: Document[] = [];
+      let batchIds: string[] = [];
+      const BATCH_SIZE = 1000;
+
+      const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+      const repos: VectorRepository[] = [];
+      if (vectorProvider === INGESTION_TARGETS.QWEN || vectorProvider === INGESTION_TARGETS.BOTH) {
+        repos.push(new VectorRepository(SUPPORTED_MODELS.QWEN_7B, MEDIA_TYPES.MOVIES));
+      }
+      if (vectorProvider === INGESTION_TARGETS.GEMINI || vectorProvider === INGESTION_TARGETS.BOTH) {
+        repos.push(new VectorRepository(SUPPORTED_MODELS.GEMINI_FLASH, MEDIA_TYPES.MOVIES));
+      }
+
+      const parser = parse({
+        columns: true,
+        skip_empty_lines: true,
+        relax_quotes: true,
+      });
+
+      parser.on('readable', async () => {
+        let record;
+        while ((record = parser.read()) !== null) {
+          if (!record.title || !record.overview) {
+            continue;
+          }
+
+          const pageContent = `Title: ${record.title}
+Original Title: ${record.original_title || ''}
+Tagline: ${record.tagline || ''}
+Genres: ${record.genres || ''}
+Director: ${record.director || ''}
+Cast: ${record.cast || ''}
+Synopsis: ${record.overview}`;
+
+          let releaseYear: number | null = null;
+          if (record.release_date) {
+            const match = record.release_date.match(/^(\d{4})/);
+            if (match) {
+              releaseYear = parseInt(match[1]);
+            }
+          }
+
+          const metadata = {
+            id: record.id,
+            imdb_id: record.imdb_id || null,
+            url: record.imdb_id ? `https://www.imdb.com/title/${record.imdb_id}` : '',
+            image_url: record.poster_path ? `https://image.tmdb.org/t/p/w500${record.poster_path}` : '',
+            score: parseFloat(record.vote_average) || 0,
+            scored_by: parseInt(record.vote_count) || 0,
+            popularity: parseFloat(record.popularity) || 0,
+            type: 'Movie',
+            status: record.status || 'Released',
+            runtime: parseInt(record.runtime) || null,
+            year: releaseYear,
+            studios: record.production_companies || '',
+            start_date: record.release_date || null,
+            genres: record.genres || '',
+            director: record.director || '',
+          };
+
+          const docId = uuidv5(record.id.toString(), MOVIE_NAMESPACE);
+
+          batch.push(new Document({ pageContent, metadata }));
+          batchIds.push(docId);
+
+          if (batch.length >= BATCH_SIZE) {
+            parser.pause();
+
+            const currentBatch = batch;
+            const currentBatchIds = batchIds;
+            batch = [];
+            batchIds = [];
+
+            try {
+              const prevLength = currentBatch.length;
+              let totalInserted = 0;
+              let totalSkipped = 0;
+
+              for (const repo of repos) {
+                const result = await repo.addDocuments(currentBatch, currentBatchIds, uploadMode);
+                totalInserted += result.inserted;
+                totalSkipped += result.skipped;
+
+                if (onLog && result.skipped > 0) {
+                  onLog(`[${repo.provider}] Skipped ${result.skipped} existing movie records.`);
+                }
+                if (onLog && result.inserted > 0) {
+                  onLog(`[${repo.provider}] Embedded and inserted ${result.inserted} new movie records.`);
+                }
+              }
+
+              count += prevLength;
+              onProgress(count);
+
+              if (totalInserted > 0) {
+                await delay(1000); // 1-second breather
+              }
+
+              parser.resume();
+            } catch (err) {
+              parser.destroy(err as Error);
+            }
+          }
+        }
+      });
+
+      parser.on('end', async () => {
+        if (batch.length > 0) {
+          try {
+            for (const repo of repos) {
+              const result = await repo.addDocuments(batch, batchIds, uploadMode);
+              if (onLog && result.skipped > 0) {
+                onLog(`[${repo.provider}] Skipped ${result.skipped} existing movie records.`);
+              }
+              if (onLog && result.inserted > 0) {
+                onLog(`[${repo.provider}] Embedded and inserted ${result.inserted} new movie records.`);
+              }
+            }
+            count += batch.length;
+            onProgress(count);
+          } catch (err) {
+            reject(err);
+            return;
+          }
+        }
+        resolve();
+      });
+
+      parser.on('error', (err) => {
+        reject(err);
+      });
+
+      parser.write(buffer);
+      parser.end();
+    });
   }
 }

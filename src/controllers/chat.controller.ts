@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { ChatService } from '../services/chat.service';
-import { ModelId, normalizeModelId, CHAT_INTENTS, ChatIntent } from '../utils/constant';
+import { ModelId, normalizeModelId, CHAT_INTENTS, ChatIntent, MEDIA_TYPES, MediaType } from '../utils/constant';
 import { AuthUser } from '../repositories/types';
 
 export class ChatController {
@@ -19,11 +19,12 @@ export class ChatController {
     history: any[],
     activeChatId: string | null,
     modelId: ModelId,
-    intent: ChatIntent
+    intent: ChatIntent,
+    mediaType: MediaType = MEDIA_TYPES.ANIME
   ): Promise<Response> {
     const langChainStream = intent === CHAT_INTENTS.DIRECT_CHAT
       ? await this.chatService.streamDirectChat(message, history, modelId)
-      : await this.chatService.streamRecommendation(message, history, modelId);
+      : await this.chatService.streamRecommendation(message, history, modelId, mediaType);
     const encoder = new TextEncoder();
     const chatService = this.chatService;
 
@@ -76,7 +77,10 @@ export class ChatController {
   async handleChat(req: NextRequest, user: AuthUser | null) {
     try {
       const body = await req.json();
-      const { message, history, chatId, provider, model } = body;
+      const { message, history, chatId, provider, model, mediaType: rawMediaType } = body;
+      const mediaType: MediaType = (rawMediaType === MEDIA_TYPES.MOVIES)
+        ? MEDIA_TYPES.MOVIES
+        : ((rawMediaType === MEDIA_TYPES.SERIES) ? MEDIA_TYPES.SERIES : MEDIA_TYPES.ANIME);
 
       if (!message) {
         return NextResponse.json(
@@ -91,7 +95,7 @@ export class ChatController {
       // Guest Mode (No authenticated user)
       if (!user) {
         const intent = await this.chatService.routeIntent(message, modelId);
-        return this.buildChatStreamResponse(message, history || [], null, modelId, intent);
+        return this.buildChatStreamResponse(message, history || [], null, modelId, intent, mediaType);
       }
 
       // Member Mode (Authenticated user)
@@ -123,7 +127,7 @@ export class ChatController {
       await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent });
 
       // Return the consolidated response stream
-      return this.buildChatStreamResponse(message, memberHistory, activeChatId, modelId, intent);
+      return this.buildChatStreamResponse(message, memberHistory, activeChatId, modelId, intent, mediaType);
 
     } catch (error: any) {
       console.error('Chat processing failed:', error);

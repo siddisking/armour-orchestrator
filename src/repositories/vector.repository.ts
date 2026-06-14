@@ -4,7 +4,7 @@ import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { PoolConfig } from 'pg';
 import { pool } from '../lib/db';
-import { SUPPORTED_MODELS, ModelId, MODEL_REGISTRY, PROVIDERS } from '../utils/constant';
+import { SUPPORTED_MODELS, ModelId, MODEL_REGISTRY, PROVIDERS, MEDIA_TYPES, MediaType, MEDIA_TABLES } from '../utils/constant';
 
 export class VectorRepository {
   private vectorStore: PGVectorStore | null = null;
@@ -20,12 +20,17 @@ export class VectorRepository {
     return MODEL_REGISTRY[this.modelId].provider;
   }
 
-  constructor(modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH) {
+  constructor(
+    modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH,
+    mediaType: MediaType = MEDIA_TYPES.ANIME
+  ) {
     this.modelId = modelId;
     const config = MODEL_REGISTRY[modelId];
-    this.tableName = config.tableName;
+    
+    const isQwen = config.provider === PROVIDERS.SILICONFLOW;
+    this.tableName = MEDIA_TABLES[mediaType][config.provider];
 
-    if (config.provider === PROVIDERS.SILICONFLOW) {
+    if (isQwen) {
       this.embeddings = new OpenAIEmbeddings({
         apiKey: process.env.SILICONFLOW_API_KEY || '',
         openAIApiKey: process.env.SILICONFLOW_API_KEY || '', // Compatibility fallback
@@ -67,6 +72,7 @@ export class VectorRepository {
         contentColumnName: "content",
         metadataColumnName: "metadata",
       },
+      dimensions: MODEL_REGISTRY[this.modelId].dimensions,
     });
   }
 

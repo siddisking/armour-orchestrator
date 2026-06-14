@@ -19,6 +19,8 @@ import {
   getConversationSummaryPrompt,
   RECOMMENDATION_PROMPT_TEMPLATE,
   DIRECT_CHAT_PROMPT_TEMPLATE,
+  MEDIA_TYPES,
+  MediaType,
 } from '../utils/constant';
 
 const formatDocumentsAsString = (documents: any[]) =>
@@ -69,7 +71,7 @@ export class ChatService {
     });
 
 
-    // Initialize SiliconFlow Qwen/Qwen2.5-7B-Instruct
+    // Initialize SiliconFlow Qwen/Qwen2.5-72B-Instruct
     const config = MODEL_REGISTRY[SUPPORTED_MODELS.QWEN_7B];
     this.siliconflowLlm = new ChatOpenAI({
       apiKey: process.env.SILICONFLOW_API_KEY || '',
@@ -78,7 +80,8 @@ export class ChatService {
         apiKey: process.env.SILICONFLOW_API_KEY || '', // Nested override
       },
       modelName: config.textModel,
-      temperature: 0.3,
+      temperature: 0.7,
+      frequencyPenalty: 0.2,
     });
   }
 
@@ -133,9 +136,13 @@ export class ChatService {
       const text = (typeof response === 'string' ? response : (response as any).content).trim();
       const cleaned = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/, '').trim();
 
-      if (cleaned === CHAT_INTENTS.DIRECT_CHAT || cleaned === CHAT_INTENTS.VECTOR_SEARCH) {
-        console.log(`[Route Intent] Deduced intent: "${cleaned}" for query: "${query}"`);
-        return cleaned as ChatIntent;
+      if (cleaned.includes(CHAT_INTENTS.VECTOR_SEARCH)) {
+        console.log(`[Route Intent] Deduced intent: "${CHAT_INTENTS.VECTOR_SEARCH}" for query: "${query}"`);
+        return CHAT_INTENTS.VECTOR_SEARCH;
+      }
+      if (cleaned.includes(CHAT_INTENTS.DIRECT_CHAT)) {
+        console.log(`[Route Intent] Deduced intent: "${CHAT_INTENTS.DIRECT_CHAT}" for query: "${query}"`);
+        return CHAT_INTENTS.DIRECT_CHAT;
       }
       console.log(`[Route Intent] Deduced fallback intent: "${CHAT_INTENTS.DIRECT_CHAT}" (unrecognized intent format: "${cleaned}") for query: "${query}"`);
       return CHAT_INTENTS.DIRECT_CHAT;
@@ -148,7 +155,12 @@ export class ChatService {
   /**
    * Generates a streamed recommendation for real-time typing effect.
    */
-  async streamRecommendation(query: string, history?: any[], modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH) {
+  async streamRecommendation(
+    query: string, 
+    history?: any[], 
+    modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH,
+    mediaType: MediaType = MEDIA_TYPES.ANIME
+  ) {
     const config = MODEL_REGISTRY[modelId];
 
     // 1. Generate reformulated search query if history exists (skipping first message turn)
@@ -164,7 +176,7 @@ export class ChatService {
     const filter = await this.extractMetadataFilter(reformulatedQuery, modelId);
     console.log(`[RAG Search] Model: ${modelId} | Target Query: "${reformulatedQuery}" | Extracted Metadata Filter:`, filter || 'None');
 
-    const vectorRepo = config.id === SUPPORTED_MODELS.QWEN_7B ? this.siliconflowVectorRepo : this.geminiVectorRepo;
+    const vectorRepo = new VectorRepository(modelId, mediaType);
     const retriever = await vectorRepo.getRetriever(filter);
     const chatHistoryString = formatHistory(history);
 
