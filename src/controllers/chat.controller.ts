@@ -72,6 +72,44 @@ export class ChatController {
   }
 
   /**
+   * Helper to build a readable stream response for under-development features.
+   */
+  private async buildUnderDevelopmentResponse(
+    activeChatId: string | null,
+    intent: ChatIntent
+  ): Promise<Response> {
+    const encoder = new TextEncoder();
+    const chatService = this.chatService;
+    const reply = "This feature is still under development, please check with us later, meanwhile look for any animated series (anime) on our platform";
+
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          controller.enqueue(encoder.encode(reply));
+          if (activeChatId) {
+            await chatService.saveChatMessage(activeChatId, 'model', reply, { intent });
+          }
+          controller.close();
+        } catch (err: any) {
+          controller.error(err);
+        }
+      }
+    });
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Transfer-Encoding': 'chunked'
+    };
+
+    if (activeChatId) {
+      headers['Access-Control-Expose-Headers'] = 'X-Chat-Id';
+      headers['X-Chat-Id'] = activeChatId;
+    }
+
+    return new Response(readableStream, { headers });
+  }
+
+  /**
    * Handles POST requests for the unified chat endpoint (stateful member or stateless guest).
    */
   async handleChat(req: NextRequest, user: AuthUser | null) {
@@ -94,7 +132,10 @@ export class ChatController {
 
       // Guest Mode (No authenticated user)
       if (!user) {
-        const intent = await this.chatService.routeIntent(message, modelId);
+        const intent = await this.chatService.routeIntent(message, history || [], mediaType, modelId);
+        if (intent === CHAT_INTENTS.UNSUPPORTED) {
+          return this.buildUnderDevelopmentResponse(null, intent);
+        }
         return this.buildChatStreamResponse(message, history || [], null, modelId, intent, mediaType);
       }
 
@@ -121,10 +162,14 @@ export class ChatController {
       }
 
       // Route the intent first
-      const intent = await this.chatService.routeIntent(message, modelId);
+      const intent = await this.chatService.routeIntent(message, memberHistory, mediaType, modelId);
 
       // Save the incoming user message to PostgreSQL with the deduced intent metadata
       await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent });
+
+      if (intent === CHAT_INTENTS.UNSUPPORTED) {
+        return this.buildUnderDevelopmentResponse(activeChatId, intent);
+      }
 
       // Return the consolidated response stream
       return this.buildChatStreamResponse(message, memberHistory, activeChatId, modelId, intent, mediaType);

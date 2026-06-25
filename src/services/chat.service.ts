@@ -126,9 +126,27 @@ export class ChatService {
 
   }
 
-  async routeIntent(query: string, modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH): Promise<ChatIntent> {
+  async routeIntent(
+    query: string,
+    history: any[] = [],
+    mediaType: MediaType = MEDIA_TYPES.ANIME,
+    modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH
+  ): Promise<ChatIntent> {
+    if (mediaType === MEDIA_TYPES.MOVIES || mediaType === MEDIA_TYPES.SERIES) {
+      console.log(`[Route Intent] Automatically routing mediaType "${mediaType}" to "${CHAT_INTENTS.UNSUPPORTED}"`);
+      return CHAT_INTENTS.UNSUPPORTED;
+    }
+
+    // Reformulate query using CQR if history exists to resolve context for follow-up query classification
+    let classificationQuery = query;
+    const recentHistory = history ? history.slice(-5) : [];
+    if (recentHistory.length > 0) {
+      classificationQuery = await this.createConversationSummary(recentHistory, query, modelId);
+      console.log(`[Route Intent CQR] Original: "${query}" | Reformulated: "${classificationQuery}"`);
+    }
+
     try {
-      const prompt = getRouteIntentPrompt(query);
+      const prompt = getRouteIntentPrompt(classificationQuery);
       const config = MODEL_REGISTRY[modelId];
 
       const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
@@ -136,6 +154,10 @@ export class ChatService {
       const text = (typeof response === 'string' ? response : (response as any).content).trim();
       const cleaned = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/, '').trim();
 
+      if (cleaned.includes(CHAT_INTENTS.UNSUPPORTED)) {
+        console.log(`[Route Intent] Deduced intent: "${CHAT_INTENTS.UNSUPPORTED}" for query: "${query}"`);
+        return CHAT_INTENTS.UNSUPPORTED;
+      }
       if (cleaned.includes(CHAT_INTENTS.VECTOR_SEARCH)) {
         console.log(`[Route Intent] Deduced intent: "${CHAT_INTENTS.VECTOR_SEARCH}" for query: "${query}"`);
         return CHAT_INTENTS.VECTOR_SEARCH;
@@ -151,6 +173,7 @@ export class ChatService {
     }
     return CHAT_INTENTS.DIRECT_CHAT;
   }
+
 
   /**
    * Generates a streamed recommendation for real-time typing effect.

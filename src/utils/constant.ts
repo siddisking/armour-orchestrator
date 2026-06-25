@@ -43,6 +43,7 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
 export const CHAT_INTENTS = {
   DIRECT_CHAT: 'DIRECT_CHAT',
   VECTOR_SEARCH: 'VECTOR_SEARCH',
+  UNSUPPORTED: 'UNSUPPORTED',
 } as const;
 
 export type ChatIntent = typeof CHAT_INTENTS[keyof typeof CHAT_INTENTS];
@@ -93,13 +94,19 @@ export const normalizeModelId = (input: string): ModelId => {
 export const getRouteIntentPrompt = (query: string): string => {
   const sanitizedQuery = query.replace(/"/g, '\\"');
   return `You are a query classifier for an AI recommendation assistant.
-Classify the user's query into exactly one of these two intents:
-1. "VECTOR_SEARCH": Use this if the user is asking for recommendations, suggestions, lists of anime/movies/series, or describing a plot/characters/themes they want to find.
-   - Example: "suggest me isekai anime", "recommend a good romance show", "anime where mc is op", "looking for an anime about space"
+We only support animated TV series (anime) recommendations. We do not support live-action movies, live-action TV series, or non-anime content.
+
+Classify the user's query into exactly one of these three intents:
+1. "VECTOR_SEARCH": Use this if the user is asking for recommendations, suggestions, lists of anime/animated series, or describing a plot/characters/themes of an anime they want to find.
+   - Also use this if the user is refining, correcting, or adding filters/constraints to a previous recommendation search (e.g., specifying a studio, year, genre, rating, or length).
+   - Example: "suggest me isekai anime", "recommend a good romance show", "anime where mc is op", "looking for an anime about space", "Studios should be passione", "I meant producer is Passione", "only from 2023", "less than 13 episodes"
 2. "DIRECT_CHAT": Use this if the user is greeting you, asking generic questions, defining concepts, explaining terms, or having a casual conversation.
    - Example: "hello", "what is an isekai?", "explain what shonen means", "who are you?"
+3. "UNSUPPORTED": Use this if the user is asking for recommendations, suggestions, or information about live-action movies, live-action TV series, or non-anime content (like Hollywood/Bollywood movies, Game of Thrones, Kdramas, sitcoms).
+   - Example: "recommend some live action fantasy series", "best hollywood action movies", "good sitcoms to watch"
+   - Note: Anime movies or anime series (like Akira, Spirited Away, Naruto) are anime and should be classified as VECTOR_SEARCH, not UNSUPPORTED.
 
-Output ONLY the word "DIRECT_CHAT" or "VECTOR_SEARCH" (without quotes or punctuation). Do not add any explanation.
+Output ONLY the word "DIRECT_CHAT", "VECTOR_SEARCH", or "UNSUPPORTED" (without quotes or punctuation). Do not add any explanation.
 
 Query: "${sanitizedQuery}"
 Response:`;
@@ -120,6 +127,12 @@ Available Database Metadata Fields:
   - "gt" (greater than)
   - "lte" (less than or equal to)
   - "lt" (less than)
+- "episodes" (object): Numeric count of episodes. Supported comparison operators are:
+  - "gte" (greater than or equal to)
+  - "gt" (greater than)
+  - "lte" (less than or equal to, e.g. for "short series with under 13 episodes" use {"episodes": {"lte": 13}})
+  - "lt" (less than)
+- "genres" (array of strings): Extract any matching genres as a JSON list (e.g., "Action", "Comedy", "Fantasy", "Sci-Fi", "Drama", "Slice of Life", "Romance", "Adventure", "Suspense").
 
 Respond ONLY with a valid JSON object. Do not include markdown code block formatting or any other text. If no filters apply, return an empty object {}.
 
@@ -127,11 +140,11 @@ Examples:
 Query: "animes released in 2026"
 Response: {"year": 2026}
 
-Query: "completed action series by bones studio"
-Response: {"studios": "Bones", "status": "Finished Airing"}
+Query: "completed action and fantasy series by bones studio"
+Response: {"studios": "Bones", "status": "Finished Airing", "genres": ["Action", "Fantasy"]}
 
-Query: "Some high rated anime ?"
-Response: {"score": {"gte": 8.0}}
+Query: "Some high rated anime with less than 13 episodes"
+Response: {"score": {"gte": 8.0}, "episodes": {"lte": 13}}
 
 Query: "anime with score above 7.5 by madhouse"
 Response: {"studios": "Madhouse", "score": {"gt": 7.5}}
@@ -163,9 +176,10 @@ ${query}
  * The LangChain PromptTemplate for direct chat/conversation.
  */
 export const DIRECT_CHAT_PROMPT_TEMPLATE = `
-You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
+You are PlotArmor AI, an expert recommender of animated TV series (anime). We currently only support animated TV series (anime) on our platform.
 You are here to answer general questions, explain anime concepts or terms, greet the user, or have a casual conversation.
 Always be conversational, enthusiastic, and helpful.
+If the user asks for recommendations of live-action movies, live-action series, or other non-animated formats, politely explain that you only support animated TV series (anime) and guide them to find anime instead.
 
 Conversation History:
 {chat_history}
@@ -178,9 +192,10 @@ Answer:
  * The LangChain PromptTemplate for generating recommendations.
  */
 export const RECOMMENDATION_PROMPT_TEMPLATE = `
-You are PlotArmor AI, an expert recommender of anime, movies, and TV series.
+You are PlotArmor AI, an expert recommender of animated TV series (anime). We currently only support animated TV series (anime) on our platform.
 Use the following pieces of retrieved context and conversation history and conversation summary to answer the user's question and provide a recommendation.
-If you don't know the answer or the context doesn't match perfectly, use your general knowledge but mention that it's a broader recommendation.
+If you don't know the answer or the context doesn't match perfectly, use your general knowledge to suggest only animated TV series (anime) that fit the description, but mention that it's a broader recommendation.
+Do NOT recommend live-action movies or live-action series under any circumstances. If the user asks for non-animated or live-action media, explain politely that you only support animated TV series (anime) and guide them to find anime instead.
 Always be conversational, enthusiastic, and helpful.
 
 -- Formatting Instructions --
