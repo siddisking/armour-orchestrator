@@ -123,7 +123,6 @@ export class ChatService {
       console.warn("Failed to create conversation summary:", error);
       return query;
     }
-
   }
 
   async routeIntent(
@@ -131,49 +130,51 @@ export class ChatService {
     history: any[] = [],
     mediaType: MediaType = MEDIA_TYPES.ANIME,
     modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH
-  ): Promise<ChatIntent> {
+  ): Promise<{ intent: ChatIntent; reformulatedQuery: string }> {
     if (mediaType === MEDIA_TYPES.MOVIES || mediaType === MEDIA_TYPES.SERIES) {
-      console.log(`[Route Intent] Automatically routing mediaType "${mediaType}" to "${CHAT_INTENTS.UNSUPPORTED}"`);
-      return CHAT_INTENTS.UNSUPPORTED;
+      console.log(`Step 1: ChatService.routeIntent (CQR) - Skipped (Unsupported MediaType) | Total time: 0ms`);
+      console.log(`Step 2: ChatService.routeIntent (LLM Classify) - Total time: 0ms`);
+      return { intent: CHAT_INTENTS.UNSUPPORTED, reformulatedQuery: query };
     }
 
     // Reformulate query using CQR if history exists to resolve context for follow-up query classification
     let classificationQuery = query;
     const recentHistory = history ? history.slice(-5) : [];
     if (recentHistory.length > 0) {
+      const cqrStart = Date.now();
       classificationQuery = await this.createConversationSummary(recentHistory, query, modelId);
-      console.log(`[Route Intent CQR] Original: "${query}" | Reformulated: "${classificationQuery}"`);
+      console.log(`Step 1: ChatService.routeIntent (CQR) - Total time: ${Date.now() - cqrStart}ms`);
+    } else {
+      console.log(`Step 1: ChatService.routeIntent (CQR) - Skipped | Total time: 0ms`);
     }
 
+    const classificationStart = Date.now();
     try {
       const prompt = getRouteIntentPrompt(classificationQuery);
       const config = MODEL_REGISTRY[modelId];
-
       const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+      
       const response = await llm.invoke(prompt);
       const text = (typeof response === 'string' ? response : (response as any).content).trim();
       const cleaned = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/, '').trim();
 
+      const routeTime = Date.now() - classificationStart;
+      console.log(`Step 2: ChatService.routeIntent (LLM Classify) - Total time: ${routeTime}ms`);
+
+      let intent: ChatIntent = CHAT_INTENTS.DIRECT_CHAT;
       if (cleaned.includes(CHAT_INTENTS.UNSUPPORTED)) {
-        console.log(`[Route Intent] Deduced intent: "${CHAT_INTENTS.UNSUPPORTED}" for query: "${query}"`);
-        return CHAT_INTENTS.UNSUPPORTED;
+        intent = CHAT_INTENTS.UNSUPPORTED;
+      } else if (cleaned.includes(CHAT_INTENTS.VECTOR_SEARCH)) {
+        intent = CHAT_INTENTS.VECTOR_SEARCH;
+      } else if (cleaned.includes(CHAT_INTENTS.DIRECT_CHAT)) {
+        intent = CHAT_INTENTS.DIRECT_CHAT;
       }
-      if (cleaned.includes(CHAT_INTENTS.VECTOR_SEARCH)) {
-        console.log(`[Route Intent] Deduced intent: "${CHAT_INTENTS.VECTOR_SEARCH}" for query: "${query}"`);
-        return CHAT_INTENTS.VECTOR_SEARCH;
-      }
-      if (cleaned.includes(CHAT_INTENTS.DIRECT_CHAT)) {
-        console.log(`[Route Intent] Deduced intent: "${CHAT_INTENTS.DIRECT_CHAT}" for query: "${query}"`);
-        return CHAT_INTENTS.DIRECT_CHAT;
-      }
-      console.log(`[Route Intent] Deduced fallback intent: "${CHAT_INTENTS.DIRECT_CHAT}" (unrecognized intent format: "${cleaned}") for query: "${query}"`);
-      return CHAT_INTENTS.DIRECT_CHAT;
+      return { intent, reformulatedQuery: classificationQuery };
     } catch (error) {
       console.warn("Failed to route intent:", error);
     }
-    return CHAT_INTENTS.DIRECT_CHAT;
+    return { intent: CHAT_INTENTS.DIRECT_CHAT, reformulatedQuery: query };
   }
-
 
   /**
    * Generates a streamed recommendation for real-time typing effect.
@@ -182,31 +183,39 @@ export class ChatService {
     query: string, 
     history?: any[], 
     modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH,
-    mediaType: MediaType = MEDIA_TYPES.ANIME
+    mediaType: MediaType = MEDIA_TYPES.ANIME,
+    reformulatedQuery?: string
   ) {
     const config = MODEL_REGISTRY[modelId];
 
-    // 1. Generate reformulated search query if history exists (skipping first message turn)
-    let reformulatedQuery = query;
-    const recentHistory = history ? history.slice(-5) : [];
-    if (recentHistory.length > 0) {
-      reformulatedQuery = await this.createConversationSummary(recentHistory, query, modelId);
-      console.log(`[RAG CQR] Original Query: "${query}" | Reformulated: "${reformulatedQuery}"`);
+    // Use passed reformulatedQuery if available, otherwise fallback
+    let finalQuery = reformulatedQuery;
+    if (!finalQuery) {
+      finalQuery = query;
+      const recentHistory = history ? history.slice(-5) : [];
+      if (recentHistory.length > 0) {
+        finalQuery = await this.createConversationSummary(recentHistory, query, modelId);
+      }
     }
 
-
-    // 2. Extract metadata filters using the reformulated query
-    const filter = await this.extractMetadataFilter(reformulatedQuery, modelId);
-    console.log(`[RAG Search] Model: ${modelId} | Target Query: "${reformulatedQuery}" | Extracted Metadata Filter:`, filter || 'None');
+    // 3. Extract metadata filters using the reformulated query
+    const filterStart = Date.now();
+    const filter = await this.extractMetadataFilter(finalQuery, modelId);
+    console.log(`Step 3: ChatService.extractMetadataFilter - Total time: ${Date.now() - filterStart}ms`);
 
     const vectorRepo = new VectorRepository(modelId, mediaType);
+    const retrieverStart = Date.now();
     const retriever = await vectorRepo.getRetriever(filter);
+    console.log(`Step 4: VectorRepository.getRetriever - Total time: ${Date.now() - retrieverStart}ms`);
     const chatHistoryString = formatHistory(history);
 
-    // 3. Retrieve context documents using the reformulated search query instead of the raw query
-    const contextDocs = await retriever.invoke(reformulatedQuery);
+    // 5. Retrieve context documents using the reformulated search query instead of the raw query
+    const docRetrievalStart = Date.now();
+    const contextDocs = await retriever.invoke(finalQuery);
     const contextString = formatDocumentsAsString(contextDocs);
+    console.log(`Step 5: VectorStoreRetriever.invoke (Vector DB Query) - Total time: ${Date.now() - docRetrievalStart}ms`);
 
+    const chainSetupStart = Date.now();
     const prompt = PromptTemplate.fromTemplate(RECOMMENDATION_PROMPT_TEMPLATE);
 
     const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
@@ -216,13 +225,14 @@ export class ChatService {
         context: () => contextString,
         question: new RunnablePassthrough(),
         chat_history: () => chatHistoryString,
-        conversationSummary: () => reformulatedQuery,
+        conversationSummary: () => finalQuery,
       },
       prompt,
       llm,
       new StringOutputParser(),
     ]);
 
+    console.log(`Step 6: RunnableSequence.stream (Chain Construction) - Total time: ${Date.now() - chainSetupStart}ms`);
     return await chain.stream(query);
   }
 
@@ -230,6 +240,7 @@ export class ChatService {
    * Streams a direct reply for casual conversations or non-vector searches.
    */
   async streamDirectChat(query: string, history?: any[], modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH) {
+    const totalStart = Date.now();
     const config = MODEL_REGISTRY[modelId];
     const chatHistoryString = formatHistory(history);
     const prompt = PromptTemplate.fromTemplate(DIRECT_CHAT_PROMPT_TEMPLATE);
@@ -245,6 +256,7 @@ export class ChatService {
       new StringOutputParser(),
     ]);
 
+    console.log(`Step 3: RunnableSequence.stream (Direct Chat Chain Construction) - Total time: ${Date.now() - totalStart}ms`);
     return await chain.stream(query);
   }
 

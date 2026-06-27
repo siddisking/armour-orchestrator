@@ -20,11 +20,12 @@ export class ChatController {
     activeChatId: string | null,
     modelId: ModelId,
     intent: ChatIntent,
-    mediaType: MediaType = MEDIA_TYPES.ANIME
+    mediaType: MediaType = MEDIA_TYPES.ANIME,
+    reformulatedQuery?: string
   ): Promise<Response> {
     const langChainStream = intent === CHAT_INTENTS.DIRECT_CHAT
       ? await this.chatService.streamDirectChat(message, history, modelId)
-      : await this.chatService.streamRecommendation(message, history, modelId, mediaType);
+      : await this.chatService.streamRecommendation(message, history, modelId, mediaType, reformulatedQuery);
     const encoder = new TextEncoder();
     const chatService = this.chatService;
 
@@ -132,11 +133,11 @@ export class ChatController {
 
       // Guest Mode (No authenticated user)
       if (!user) {
-        const intent = await this.chatService.routeIntent(message, history || [], mediaType, modelId);
+        const { intent, reformulatedQuery } = await this.chatService.routeIntent(message, history || [], mediaType, modelId);
         if (intent === CHAT_INTENTS.UNSUPPORTED) {
           return this.buildUnderDevelopmentResponse(null, intent);
         }
-        return this.buildChatStreamResponse(message, history || [], null, modelId, intent, mediaType);
+        return this.buildChatStreamResponse(message, history || [], null, modelId, intent, mediaType, reformulatedQuery);
       }
 
       // Member Mode (Authenticated user)
@@ -162,7 +163,7 @@ export class ChatController {
       }
 
       // Route the intent first
-      const intent = await this.chatService.routeIntent(message, memberHistory, mediaType, modelId);
+      const { intent, reformulatedQuery } = await this.chatService.routeIntent(message, memberHistory, mediaType, modelId);
 
       // Save the incoming user message to PostgreSQL with the deduced intent metadata
       await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent });
@@ -172,7 +173,7 @@ export class ChatController {
       }
 
       // Return the consolidated response stream
-      return this.buildChatStreamResponse(message, memberHistory, activeChatId, modelId, intent, mediaType);
+      return this.buildChatStreamResponse(message, memberHistory, activeChatId, modelId, intent, mediaType, reformulatedQuery);
 
     } catch (error: any) {
       console.error('Chat processing failed:', error);

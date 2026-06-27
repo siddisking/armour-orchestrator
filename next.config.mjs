@@ -9,7 +9,7 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   experimental: {
-    serverComponentsExternalPackages: ["langchain", "@langchain/core", "@langchain/google-genai", "langsmith"],
+    serverComponentsExternalPackages: ["langchain", "@langchain/core", "@langchain/google-genai", "langsmith", "@langchain/qdrant", "@qdrant/js-client-rest"],
   }
 };
 

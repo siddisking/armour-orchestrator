@@ -6,13 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "qdrant:migrate": "ts-node -O '{\"module\": \"commonjs\"}' src/migrations/migrate.ts"
   },
   "dependencies": {
     "@langchain/community": "^1.1.27",
     "@langchain/core": "^1.1.41",
     "@langchain/google-genai": "^2.1.28",
     "@langchain/openai": "^1.4.4",
+    "@langchain/qdrant": "^1.0.3",
+    "@qdrant/js-client-rest": "^1.18.0",
     "bcryptjs": "^3.0.3",
     "csv-parse": "^6.2.1",
     "csv-stringify": "^6.7.0",

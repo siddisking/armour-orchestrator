@@ -62,19 +62,10 @@ export const MEDIA_TYPES = {
 
 export type MediaType = typeof MEDIA_TYPES[keyof typeof MEDIA_TYPES];
 
-export const MEDIA_TABLES = {
-  [MEDIA_TYPES.ANIME]: {
-    [PROVIDERS.GEMINI]: 'anime_documents',
-    [PROVIDERS.SILICONFLOW]: 'anime_documents_qwen',
-  },
-  [MEDIA_TYPES.MOVIES]: {
-    [PROVIDERS.GEMINI]: 'movie_documents',
-    [PROVIDERS.SILICONFLOW]: 'movie_documents_qwen',
-  },
-  [MEDIA_TYPES.SERIES]: {
-    [PROVIDERS.GEMINI]: 'series_documents',
-    [PROVIDERS.SILICONFLOW]: 'series_documents_qwen',
-  },
+export const MEDIA_COLLECTIONS = {
+  [MEDIA_TYPES.ANIME]: 'animated_series',
+  [MEDIA_TYPES.MOVIES]: 'animated_movies',
+  [MEDIA_TYPES.SERIES]: 'live_action_series',
 } as const;
 
 export const normalizeModelId = (input: string): ModelId => {
