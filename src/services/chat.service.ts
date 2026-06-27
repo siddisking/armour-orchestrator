@@ -159,8 +159,6 @@ export class ChatService {
       const cleaned = text.replace(/^```[a-z]*\s*/i, '').replace(/```$/, '').trim();
 
       const routeTime = Date.now() - classificationStart;
-      console.log(`Step 2: ChatService.routeIntent (LLM Classify) - Total time: ${routeTime}ms`);
-
       let intent: ChatIntent = CHAT_INTENTS.DIRECT_CHAT;
       if (cleaned.includes(CHAT_INTENTS.UNSUPPORTED)) {
         intent = CHAT_INTENTS.UNSUPPORTED;
@@ -169,6 +167,8 @@ export class ChatService {
       } else if (cleaned.includes(CHAT_INTENTS.DIRECT_CHAT)) {
         intent = CHAT_INTENTS.DIRECT_CHAT;
       }
+
+      console.log(`Step 2: ChatService.routeIntent (LLM Classify) - Intent: ${intent} - Total time: ${routeTime}ms`);
       return { intent, reformulatedQuery: classificationQuery };
     } catch (error) {
       console.warn("Failed to route intent:", error);
@@ -201,7 +201,7 @@ export class ChatService {
     // 3. Extract metadata filters using the reformulated query
     const filterStart = Date.now();
     const filter = await this.extractMetadataFilter(finalQuery, modelId);
-    console.log(`Step 3: ChatService.extractMetadataFilter - Total time: ${Date.now() - filterStart}ms`);
+    console.log(`Step 3: ChatService.extractMetadataFilter - Filter Extracted: ${JSON.stringify(filter || {})} - Total time: ${Date.now() - filterStart}ms`);
 
     const vectorRepo = new VectorRepository(modelId, mediaType);
     const retrieverStart = Date.now();
