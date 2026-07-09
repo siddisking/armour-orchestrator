@@ -1,8 +1,6 @@
 import { HealthController } from '../../../controllers/health.controller';
 
-// Initialize the controller once
-const healthController = new HealthController();
-
 export async function GET() {
+  const healthController = new HealthController();
   return healthController.getHealth();
 }

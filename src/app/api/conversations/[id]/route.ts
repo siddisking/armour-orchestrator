@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ChatController } from '../../../../controllers/chat.controller';
 import { withRateLimit } from '../../../../lib/rateLimit';
+import { AuthUser } from '../../../../repositories/types';
 import jwt from 'jsonwebtoken';
 
-const chatController = new ChatController();
-
-function getUserFromReq(req: NextRequest) {
+function getUserFromReq(req: NextRequest): AuthUser | null {
   const authHeader = req.headers.get('authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
@@ -13,8 +12,8 @@ function getUserFromReq(req: NextRequest) {
   const token = authHeader.split(' ')[1];
   try {
     const secret = process.env.NEXTAUTH_SECRET || 'super-secret-key-replace-me-in-production';
-    return jwt.verify(token, secret) as jwt.JwtPayload;
-  } catch (_err) {
+    return jwt.verify(token, secret) as unknown as AuthUser;
+  } catch {
     return null;
   }
 }
@@ -29,6 +28,7 @@ export const GET = withRateLimit(async (
   }
 
   const { id } = context.params;
+  const chatController = new ChatController();
   return chatController.getConversation(req, user, id);
 });
 
@@ -42,6 +42,7 @@ export const PATCH = withRateLimit(async (
   }
 
   const { id } = context.params;
+  const chatController = new ChatController();
   return chatController.renameConversation(req, user, id);
 });
 
@@ -55,6 +56,7 @@ export const DELETE = withRateLimit(async (
   }
 
   const { id } = context.params;
+  const chatController = new ChatController();
   return chatController.deleteConversation(req, user, id);
 });
 
