@@ -219,3 +219,8 @@ Context:
 User's Request: {question}
 Answer:
 `;
+
+export const RATE_LIMITS = {
+  CHAT_LIMIT: 10,    // 10 requests per minute for chat
+  DEFAULT_LIMIT: 30, // 30 requests per minute for other endpoints
+} as const;
