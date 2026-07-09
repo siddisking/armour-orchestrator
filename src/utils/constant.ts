@@ -223,4 +223,9 @@ Answer:
 export const RATE_LIMITS = {
   CHAT_LIMIT: 10,    // 10 requests per minute for chat
   DEFAULT_LIMIT: 30, // 30 requests per minute for other endpoints
+  KEYS: {
+    CHAT: 'chat',
+    CONVERSATIONS: 'conversations',
+    CONVERSATIONS_DETAIL: 'conversations:detail',
+  },
 } as const;

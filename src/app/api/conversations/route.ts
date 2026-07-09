@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ChatController } from '../../../controllers/chat.controller';
 import { withRateLimit } from '../../../lib/rateLimit';
 import { AuthUser } from '../../../repositories/types';
+import { RATE_LIMITS } from '../../../utils/constant';
 import jwt from 'jsonwebtoken';
 
 function getUserFromReq(req: NextRequest): AuthUser | null {
@@ -26,5 +27,5 @@ export const GET = withRateLimit(async (req: NextRequest) => {
 
   const chatController = new ChatController();
   return chatController.listConversations(req, user);
-});
+}, { key: RATE_LIMITS.KEYS.CONVERSATIONS });
 

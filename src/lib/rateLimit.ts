@@ -14,18 +14,28 @@ export interface RateLimitResult {
  */
 export async function checkRateLimit(
   ipOrUserId: string,
-  limit: number = RATE_LIMITS.DEFAULT_LIMIT
+  limit: number = RATE_LIMITS.DEFAULT_LIMIT,
+  routeKey: string = 'default'
 ): Promise<RateLimitResult> {
-  const key = `ratelimit:${ipOrUserId}`;
+  const key = `ratelimit:${routeKey}:${ipOrUserId}`;
 
   try {
-    // Atomically set key to "1" with 60s expiry ONLY if it does not exist
-    const setCheck = await redis.set(key, '1', 'EX', 60, 'NX');
+    // Set the count to "1" with limit inside a JSON payload ONLY if key doesn't exist
+    const payload = JSON.stringify({ count: 1, limit });
+    const setCheck = await redis.set(key, payload, 'EX', 60, 'NX');
     let count = 1;
 
     if (setCheck !== 'OK') {
-      // Key already exists, so we just increment it
-      count = await redis.incr(key);
+      // Key already exists, retrieve and increment count
+      const val = await redis.get(key);
+      if (val) {
+        const data = JSON.parse(val);
+        count = (data.count || 0) + 1;
+
+        // Write the updated JSON back, keeping the remaining TTL
+        const updatedPayload = JSON.stringify({ count, limit: data.limit || limit });
+        await redis.set(key, updatedPayload, 'KEEPTTL');
+      }
     }
 
     return {
@@ -46,15 +56,16 @@ export async function checkRateLimit(
  */
 export function withRateLimit<T extends unknown[]>(
   handler: (req: NextRequest, ...args: T) => Promise<Response> | Response,
-  options?: { rate?: number }
+  options?: { rate?: number; key?: string }
 ) {
   return async (req: NextRequest, ...args: T): Promise<Response> => {
     const ip = req.ip || req.headers.get('x-forwarded-for')?.split(',')[0].trim() || '127.0.0.1';
     const identifier = `ip:${ip}`;
 
     const limit = options?.rate ?? RATE_LIMITS.DEFAULT_LIMIT; // Uses custom rate or default of 30
+    const routeKey = options?.key ?? 'default';
 
-    const rateLimit = await checkRateLimit(identifier, limit);
+    const rateLimit = await checkRateLimit(identifier, limit, routeKey);
 
     if (!rateLimit.allowed) {
       return NextResponse.json(

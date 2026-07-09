@@ -21,5 +21,5 @@ export const POST = withRateLimit(async (req: NextRequest) => {
 
   const chatController = new ChatController();
   return chatController.handleChat(req, user);
-}, { rate: RATE_LIMITS.CHAT_LIMIT });
+}, { rate: RATE_LIMITS.CHAT_LIMIT, key: RATE_LIMITS.KEYS.CHAT });
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ChatController } from '../../../../controllers/chat.controller';
 import { withRateLimit } from '../../../../lib/rateLimit';
 import { AuthUser } from '../../../../repositories/types';
+import { RATE_LIMITS } from '../../../../utils/constant';
 import jwt from 'jsonwebtoken';
 
 function getUserFromReq(req: NextRequest): AuthUser | null {
@@ -30,7 +31,7 @@ export const GET = withRateLimit(async (
   const { id } = context.params;
   const chatController = new ChatController();
   return chatController.getConversation(req, user, id);
-});
+}, { key: RATE_LIMITS.KEYS.CONVERSATIONS_DETAIL });
 
 export const PATCH = withRateLimit(async (
   req: NextRequest,
@@ -44,7 +45,7 @@ export const PATCH = withRateLimit(async (
   const { id } = context.params;
   const chatController = new ChatController();
   return chatController.renameConversation(req, user, id);
-});
+}, { key: RATE_LIMITS.KEYS.CONVERSATIONS_DETAIL });
 
 export const DELETE = withRateLimit(async (
   req: NextRequest,
@@ -58,5 +59,5 @@ export const DELETE = withRateLimit(async (
   const { id } = context.params;
   const chatController = new ChatController();
   return chatController.deleteConversation(req, user, id);
-});
+}, { key: RATE_LIMITS.KEYS.CONVERSATIONS_DETAIL });
 
