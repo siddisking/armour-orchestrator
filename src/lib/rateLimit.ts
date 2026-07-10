@@ -60,11 +60,12 @@ export function withRateLimit<T extends unknown[]>(
 ) {
   return async (req: NextRequest, ...args: T): Promise<Response> => {
     const xForwardedFor = req.headers.get('x-forwarded-for');
-    const ip = xForwardedFor?.split(',')[0].trim() || req.ip || '127.0.0.1';
+    const gatewayUserIp = req.headers.get('x-gateway-user-ip');
+    const ip = gatewayUserIp || xForwardedFor?.split(',')[0].trim() || req.ip || '127.0.0.1';
     const identifier = `ip:${ip}`;
     const routeKey = options?.key ?? 'default';
 
-    console.log(`[RateLimit Debug] x-forwarded-for: ${xForwardedFor}, req.ip: ${req.ip}, resolved IP: ${ip}, routeKey: ${routeKey}`);
+    console.log(`[RateLimit Debug] x-gateway-user-ip: ${gatewayUserIp}, x-forwarded-for: ${xForwardedFor}, req.ip: ${req.ip}, resolved IP: ${ip}, routeKey: ${routeKey}`);
 
     const limit = options?.rate ?? RATE_LIMITS.DEFAULT_LIMIT; // Uses custom rate or default of 30
     const rateLimit = await checkRateLimit(identifier, limit, routeKey);
