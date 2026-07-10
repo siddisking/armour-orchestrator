@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { redis } from './redis';
 import { RATE_LIMITS } from '../utils/constant';
-import { waitUntil } from '@vercel/functions';
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -69,22 +68,7 @@ export function withRateLimit<T extends unknown[]>(
     const routeKey = options?.key ?? 'default';
 
     const limit = options?.rate ?? RATE_LIMITS.DEFAULT_LIMIT; // Uses custom rate or default of 30
-    const isGatewayChecked = req.headers.get('x-gateway-checked') === 'true';
-
-    let rateLimit = { allowed: true, remainingTokens: limit };
-
-    if (isGatewayChecked) {
-      // Gateway already verified this request is allowed.
-      // Increment the counter in the background to avoid blocking the response.
-      waitUntil(
-        checkRateLimit(identifier, limit, routeKey).catch(err => {
-          console.error('Rate limit background update failed:', err);
-        })
-      );
-    } else {
-      // Fallback: enforce rate limiting synchronously
-      rateLimit = await checkRateLimit(identifier, limit, routeKey);
-    }
+    const rateLimit = await checkRateLimit(identifier, limit, routeKey);
 
     if (!rateLimit.allowed) {
       return NextResponse.json(
