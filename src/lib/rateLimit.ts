@@ -59,7 +59,7 @@ export function withRateLimit<T extends unknown[]>(
   options?: { rate?: number; key?: string }
 ) {
   return async (req: NextRequest, ...args: T): Promise<Response> => {
-    const ip = req.ip || req.headers.get('x-forwarded-for')?.split(',')[0].trim() || '127.0.0.1';
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim() || req.ip || '127.0.0.1';
     const identifier = `ip:${ip}`;
 
     const limit = options?.rate ?? RATE_LIMITS.DEFAULT_LIMIT; // Uses custom rate or default of 30
