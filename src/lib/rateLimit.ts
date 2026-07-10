@@ -67,10 +67,21 @@ export function withRateLimit<T extends unknown[]>(
     const identifier = `ip:${ip}`;
     const routeKey = options?.key ?? 'default';
 
-    console.log(`[RateLimit Debug] x-gateway-user-ip: ${gatewayUserIp}, x-forwarded-for: ${xForwardedFor}, req.ip: ${req.ip}, resolved IP: ${ip}, routeKey: ${routeKey}`);
-
     const limit = options?.rate ?? RATE_LIMITS.DEFAULT_LIMIT; // Uses custom rate or default of 30
-    const rateLimit = await checkRateLimit(identifier, limit, routeKey);
+    const isGatewayChecked = req.headers.get('x-gateway-checked') === 'true';
+
+    let rateLimit = { allowed: true, remainingTokens: limit };
+
+    if (isGatewayChecked) {
+      // Gateway already verified this request is allowed.
+      // Increment the counter in the background to avoid blocking the response.
+      checkRateLimit(identifier, limit, routeKey).catch(err => {
+        console.error('Rate limit background update failed:', err);
+      });
+    } else {
+      // Fallback: enforce rate limiting synchronously
+      rateLimit = await checkRateLimit(identifier, limit, routeKey);
+    }
 
     if (!rateLimit.allowed) {
       return NextResponse.json(
