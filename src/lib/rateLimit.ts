@@ -61,7 +61,9 @@ export function withRateLimit<T extends unknown[]>(
   return async (req: NextRequest, ...args: T): Promise<Response> => {
     const xForwardedFor = req.headers.get('x-forwarded-for');
     const gatewayUserIp = req.headers.get('x-gateway-user-ip');
-    const ip = gatewayUserIp || xForwardedFor?.split(',')[0].trim() || req.ip || '127.0.0.1';
+    
+    const rawIp = gatewayUserIp || xForwardedFor;
+    const ip = rawIp?.split(',')[0].trim() || req.ip || '127.0.0.1';
     const identifier = `ip:${ip}`;
     const routeKey = options?.key ?? 'default';
 
