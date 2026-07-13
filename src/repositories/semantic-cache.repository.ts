@@ -212,4 +212,48 @@ export class SemanticCacheRepository {
       throw err;
     }
   }
+
+  /**
+   * Searches the semantic cache in Qdrant for a query similarity matching >= retrievalThreshold.
+   * If a match is found, it returns the cached response string. Otherwise, returns null.
+   */
+  async retrieveCache(
+    query: string,
+    retrievalThreshold = CACHE_CONFIG.RETRIEVAL_THRESHOLD
+  ): Promise<string | null> {
+    const start = Date.now();
+    await this.ensureCollection();
+
+    try {
+      // 1. Embed the search query
+      const embedStart = Date.now();
+      const vector = await this.embeddings.embedQuery(query);
+      const embedDuration = Date.now() - embedStart;
+
+      // 2. Query Qdrant for the closest vector match above the threshold
+      const searchStart = Date.now();
+      const searchResults = await this.client.search(this.collectionName, {
+        vector,
+        limit: 1,
+        score_threshold: retrievalThreshold
+      });
+      const searchDuration = Date.now() - searchStart;
+      const totalDuration = Date.now() - start;
+
+      if (searchResults.length > 0) {
+        const bestMatch = searchResults[0];
+        console.log(
+          `[SemanticCache] Semantic cache hit found! Match: "${bestMatch.payload?.query}" | Similarity: ${(bestMatch.score * 100).toFixed(2)}% >= ${(retrievalThreshold * 100).toFixed(2)}% | Total Time: ${totalDuration}ms (Embed: ${embedDuration}ms, Search: ${searchDuration}ms)`
+        );
+        return bestMatch.payload?.response as string || null;
+      }
+      
+      console.log(`[SemanticCache] Semantic cache miss for query: "${query}" | Total Time: ${totalDuration}ms (Embed: ${embedDuration}ms, Search: ${searchDuration}ms)`);
+      return null;
+    } catch (err) {
+      // If collection is empty or Qdrant is unavailable, fail open (log error and return null)
+      console.warn(`[SemanticCache] Query retrieval failed, failing open:`, err);
+      return null;
+    }
+  }
 }

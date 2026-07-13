@@ -231,7 +231,20 @@ export const RATE_LIMITS = {
 } as const;
 
 export const CACHE_CONFIG = {
+  /**
+   * Similarity threshold for checking semantic duplicates during write (promotion).
+   * If a candidate query has >= 95% similarity to a cached query, we skip saving it.
+   */
   DEDUPLICATION_THRESHOLD: 0.95,
+  /**
+   * Similarity threshold for checking semantic cache hits during read (user search).
+   * If the user's search has >= 90% similarity to a cached query, we serve the cached answer.
+   */
+  RETRIEVAL_THRESHOLD: 0.90,
+  /**
+   * The minimum base search frequency score required for a query to be considered
+   * for L1 to L2 cache promotion (if the average search score is lower than this).
+   */
   MIN_PROMOTION_THRESHOLD: 5,
 } as const;
 

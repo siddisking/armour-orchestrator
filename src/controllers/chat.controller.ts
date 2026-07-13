@@ -3,6 +3,7 @@ import { ChatService } from '../services/chat.service';
 import { RedisService } from '../services/redis.service';
 import { ModelId, normalizeModelId, CHAT_INTENTS, ChatIntent, MEDIA_TYPES, MediaType } from '../utils/constant';
 import { normalizeQuery, isTemporalQuery } from '../utils/helpers';
+import { SemanticCacheRepository } from '../repositories/semantic-cache.repository';
 import { AuthUser } from '../repositories/types';
 
 export class ChatController {
@@ -225,7 +226,9 @@ export class ChatController {
       console.log(`[L1 Cache Check] query: "${normalizedQuery}", intent: ${intent}, activeHistory length: ${activeHistory.length}, isCacheable: ${isCacheableQuery}`);
       if (intent === CHAT_INTENTS.VECTOR_SEARCH && activeHistory.length === 0 && isCacheableQuery) {
         try {
-          const cachedResponse = await this.redisService.getExactRecommendationCache(normalizedQuery);
+          // 1. Try L1 Exact Cache Check (Redis)
+          let cachedResponse = await this.redisService.getExactRecommendationCache(normalizedQuery);
+          
           if (cachedResponse) {
             console.log(`[Cache Hit] L1 exact cache hit for query: "${normalizedQuery}"`);
 
@@ -245,10 +248,36 @@ export class ChatController {
               return this.buildCachedStreamResponse(cachedResponse, null, intent);
             }
           } else {
-            console.log(`[L1 Cache Check] Cache miss for query: "${normalizedQuery}"`);
+            console.log(`[L1 Cache Check] Cache miss for query: "${normalizedQuery}". Trying L2 semantic cache...`);
+
+            // 2. Try L2 Semantic Cache Check (Qdrant)
+            const semanticCacheRepo = new SemanticCacheRepository(modelId);
+            cachedResponse = await semanticCacheRepo.retrieveCache(normalizedQuery);
+
+            if (cachedResponse) {
+              console.log(`[Cache Hit] L2 semantic cache hit for query: "${normalizedQuery}"`);
+
+              // Increment popularity of queries on hits too
+              await this.redisService.incrementQueryLeaderboard(normalizedQuery);
+
+              if (user) {
+                // Create chat thread if guest started a conversation
+                if (!activeChatId) {
+                  const newChat = await this.chatService.createNewConversation(user.id, message);
+                  activeChatId = newChat.id;
+                }
+                // Save user message to PostgreSQL (with original user formatting)
+                await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent });
+                return this.buildCachedStreamResponse(cachedResponse, activeChatId, intent);
+              } else {
+                return this.buildCachedStreamResponse(cachedResponse, null, intent);
+              }
+            } else {
+              console.log(`[L2 Cache Check] Semantic cache miss for query: "${normalizedQuery}"`);
+            }
           }
         } catch (cacheErr) {
-          console.warn("[Cache Error] Redis lookup failed, failing open:", cacheErr);
+          console.warn("[Cache Error] Cache lookup fallback failed, failing open:", cacheErr);
         }
       }
 
