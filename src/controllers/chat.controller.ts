@@ -2,7 +2,7 @@ import { NextResponse, NextRequest } from 'next/server';
 import { ChatService } from '../services/chat.service';
 import { RedisService } from '../services/redis.service';
 import { ModelId, normalizeModelId, CHAT_INTENTS, ChatIntent, MEDIA_TYPES, MediaType } from '../utils/constant';
-import { normalizeQuery } from '../utils/helpers';
+import { normalizeQuery, isTemporalQuery } from '../utils/helpers';
 import { AuthUser } from '../repositories/types';
 
 export class ChatController {
@@ -47,9 +47,10 @@ export class ChatController {
             await chatService.saveChatMessage(activeChatId, 'model', accumulatedResponse, { intent });
           }
 
-          // If this is a stateless recommendation (no conversation history), cache the response in Redis
-          console.log(`[L1 Cache Write Check] intent: ${intent}, history length: ${history?.length || 0}`);
-          if (intent === CHAT_INTENTS.VECTOR_SEARCH && (!history || history.length === 0)) {
+          // If this is a stateless recommendation (no conversation history) and non-temporal, cache the response in Redis
+          const isCacheableQuery = !isTemporalQuery(message);
+          console.log(`[L1 Cache Write Check] intent: ${intent}, history length: ${history?.length || 0}, isCacheable: ${isCacheableQuery}`);
+          if (intent === CHAT_INTENTS.VECTOR_SEARCH && (!history || history.length === 0) && isCacheableQuery) {
             try {
               console.log(`[L1 Cache Write] Writing key for query: "${message}"`);
               // Cache the result in Redis via the service
@@ -219,9 +220,10 @@ export class ChatController {
       // Route the intent first
       const { intent, reformulatedQuery } = await this.chatService.routeIntent(normalizedQuery, activeHistory, mediaType, modelId);
 
-      // L1 Cache Check: Only cache stateless recommendation searches (no history)
-      console.log(`[L1 Cache Check] query: "${normalizedQuery}", intent: ${intent}, activeHistory length: ${activeHistory.length}`);
-      if (intent === CHAT_INTENTS.VECTOR_SEARCH && activeHistory.length === 0) {
+      // L1 Cache Check: Only cache stateless recommendation searches (no history) and non-temporal queries
+      const isCacheableQuery = !isTemporalQuery(normalizedQuery);
+      console.log(`[L1 Cache Check] query: "${normalizedQuery}", intent: ${intent}, activeHistory length: ${activeHistory.length}, isCacheable: ${isCacheableQuery}`);
+      if (intent === CHAT_INTENTS.VECTOR_SEARCH && activeHistory.length === 0 && isCacheableQuery) {
         try {
           const cachedResponse = await this.redisService.getExactRecommendationCache(normalizedQuery);
           if (cachedResponse) {

@@ -229,3 +229,15 @@ export const RATE_LIMITS = {
     CONVERSATIONS_DETAIL: 'conversations:detail',
   },
 } as const;
+
+export const CACHE_CONFIG = {
+  DEDUPLICATION_THRESHOLD: 0.95,
+  MIN_PROMOTION_THRESHOLD: 5,
+} as const;
+
+export const TEMPORAL_KEYWORDS = [
+  'new', 'recent', 'recently', 'latest', 'newest', 'airing', 'ongoing', 'upcoming', 'current', 
+  'today', 'now', 'this season', 'current season', 'next season',
+  'this year', 'last year', 'next year', 'fresh',
+  'this spring', 'this summer', 'this autumn', 'this fall', 'this winter'
+] as const;

@@ -1,0 +1,14 @@
+name: Weekly Cache Promotion Cron
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Runs every Sunday at 00:00 UTC
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions UI
+
+jobs:
+  promote-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Cache Promotion
+        run: |
+          curl -f -X GET "https://armour-gateway.onrender.com/api/cron/promote?secret=${{ secrets.CRON_SECRET }}"
