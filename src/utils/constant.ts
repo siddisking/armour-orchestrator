@@ -6,6 +6,10 @@ export const PROVIDERS = {
 export const SUPPORTED_MODELS = {
   GEMINI_FLASH: 'gemini-2.5-flash',
   QWEN_7B: 'qwen-2.5-7b',
+  QWEN_14B: 'qwen-2.5-14b',
+  QWEN_32B: 'qwen-2.5-32b',
+  QWEN_72B: 'qwen-2.5-72b',
+  QWEN3_14B: 'qwen-3-14b',
 } as const;
 
 export type ModelId = typeof SUPPORTED_MODELS[keyof typeof SUPPORTED_MODELS];
@@ -32,7 +36,43 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
   [SUPPORTED_MODELS.QWEN_7B]: {
     id: SUPPORTED_MODELS.QWEN_7B,
     provider: PROVIDERS.SILICONFLOW,
+    textModel: 'Qwen/Qwen2.5-7B-Instruct',
+    embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    tableName: 'anime_documents_qwen',
+    dimensions: 1024,
+    baseURL: 'https://api.siliconflow.com/v1',
+  },
+  [SUPPORTED_MODELS.QWEN_14B]: {
+    id: SUPPORTED_MODELS.QWEN_14B,
+    provider: PROVIDERS.SILICONFLOW,
+    textModel: 'Qwen/Qwen2.5-14B-Instruct',
+    embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    tableName: 'anime_documents_qwen',
+    dimensions: 1024,
+    baseURL: 'https://api.siliconflow.com/v1',
+  },
+  [SUPPORTED_MODELS.QWEN_32B]: {
+    id: SUPPORTED_MODELS.QWEN_32B,
+    provider: PROVIDERS.SILICONFLOW,
+    textModel: 'Qwen/Qwen2.5-32B-Instruct',
+    embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    tableName: 'anime_documents_qwen',
+    dimensions: 1024,
+    baseURL: 'https://api.siliconflow.com/v1',
+  },
+  [SUPPORTED_MODELS.QWEN_72B]: {
+    id: SUPPORTED_MODELS.QWEN_72B,
+    provider: PROVIDERS.SILICONFLOW,
     textModel: 'Qwen/Qwen2.5-72B-Instruct',
+    embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    tableName: 'anime_documents_qwen',
+    dimensions: 1024,
+    baseURL: 'https://api.siliconflow.com/v1',
+  },
+  [SUPPORTED_MODELS.QWEN3_14B]: {
+    id: SUPPORTED_MODELS.QWEN3_14B,
+    provider: PROVIDERS.SILICONFLOW,
+    textModel: 'Qwen/Qwen3-14B',
     embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
     tableName: 'anime_documents_qwen',
     dimensions: 1024,
@@ -43,10 +83,18 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
 export const CHAT_INTENTS = {
   DIRECT_CHAT: 'DIRECT_CHAT',
   VECTOR_SEARCH: 'VECTOR_SEARCH',
+  FACTUAL_LOOKUP: 'FACTUAL_LOOKUP',
   UNSUPPORTED: 'UNSUPPORTED',
 } as const;
 
 export type ChatIntent = typeof CHAT_INTENTS[keyof typeof CHAT_INTENTS];
+
+export const ROUTER_TOOL_NAMES = {
+  DIRECT_CHAT: 'direct_chat',
+  FACTUAL_LOOKUP: 'factual_lookup',
+  RECOMMEND_ANIME: 'recommend_anime',
+  UNSUPPORTED: 'unsupported_content',
+} as const;
 
 export const INGESTION_TARGETS = {
   GEMINI: 'gemini',
@@ -73,8 +121,8 @@ export const normalizeModelId = (input: string): ModelId => {
   if (normalized === 'gemini' || normalized === 'gemini-2.5-flash') {
     return SUPPORTED_MODELS.GEMINI_FLASH;
   }
-  if (normalized === 'siliconflow' || normalized === 'qwen' || normalized === 'qwen-2.5-7b') {
-    return SUPPORTED_MODELS.QWEN_7B;
+  if (normalized === 'siliconflow' || normalized === 'qwen' || normalized === 'qwen-2.5-7b' || normalized === 'qwen-3-14b') {
+    return SUPPORTED_MODELS.QWEN3_14B;
   }
   return SUPPORTED_MODELS.GEMINI_FLASH;
 };

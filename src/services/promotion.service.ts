@@ -14,7 +14,7 @@ export class PromotionService {
    * Resets the leaderboard sorted set at the end of the promotion run.
    */
   async promotePopularQueries(
-    modelId: ModelId = SUPPORTED_MODELS.QWEN_7B
+    modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B
   ): Promise<{ promotedCount: number; ignoredCount: number; errorsCount: number }> {
     console.log(`[PromotionService] Starting cache promotion cycle with model "${modelId}"...`);
     

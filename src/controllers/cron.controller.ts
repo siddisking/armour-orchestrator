@@ -38,7 +38,7 @@ export class CronController {
         );
       }
 
-      const model = searchParams.get('model') || SUPPORTED_MODELS.QWEN_7B;
+      const model = searchParams.get('model') || SUPPORTED_MODELS.QWEN3_14B;
       const modelId = normalizeModelId(model);
 
       const result = await this.promotionService.promotePopularQueries(modelId);

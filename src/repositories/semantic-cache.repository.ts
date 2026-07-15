@@ -11,7 +11,7 @@ export class SemanticCacheRepository {
   private collectionName = 'anime_semantic_cache';
   private isInitialized = false;
 
-  constructor(modelId: ModelId = SUPPORTED_MODELS.QWEN_7B) {
+  constructor(modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B) {
     const config = MODEL_REGISTRY[modelId];
     this.dimensions = config.dimensions;
 
