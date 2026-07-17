@@ -17,7 +17,6 @@ import {
   CHAT_INTENTS,
   ChatIntent,
   ROUTER_TOOL_NAMES,
-  getRouteIntentPrompt,
   getMetadataFilterPrompt,
   getConversationSummaryPrompt,
   RECOMMENDATION_PROMPT_TEMPLATE,

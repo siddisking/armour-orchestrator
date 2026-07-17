@@ -1,11 +1,12 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { ChatService } from '../services/chat.service';
 import { RedisService } from '../services/redis.service';
-import { ModelId, normalizeModelId, CHAT_INTENTS, ChatIntent, ROUTER_TOOL_NAMES, MEDIA_TYPES, MediaType, MODEL_REGISTRY } from '../utils/constant';
+import { ModelId, normalizeModelId, CHAT_INTENTS, ChatIntent, ROUTER_TOOL_NAMES, MEDIA_TYPES, MediaType, MODEL_REGISTRY, DEFAULT_MODEL_ID } from '../utils/constant';
 import { normalizeQuery, isTemporalQuery } from '../utils/helpers';
 import { SemanticCacheRepository } from '../repositories/semantic-cache.repository';
 import { AnimeDocumentRepository } from '../repositories/anime-document.repository';
 import { AuthUser } from '../repositories/types';
+import { compiledChatGraph } from '../services/chat.graph';
 
 const extractTitleFromContent = (content: string): string => {
   const match = content.match(/^Title:\s*(.*)$/m);
@@ -26,19 +27,14 @@ export class ChatController {
    * If an activeChatId is provided, it accumulates the response and commits it to PostgreSQL.
    */
   private async buildChatStreamResponse(
+    langChainStream: any,
     message: string,
     history: any[],
     activeChatId: string | null,
     modelId: ModelId,
     intent: ChatIntent,
-    mediaType: MediaType = MEDIA_TYPES.ANIME,
-    reformulatedQuery?: string,
-    preExtractedFilter?: Record<string, any>,
     requestStart?: number
   ): Promise<Response> {
-    const langChainStream = intent === CHAT_INTENTS.DIRECT_CHAT
-      ? await this.chatService.streamDirectChat(message, history, modelId)
-      : await this.chatService.streamRecommendation(message, history, modelId, mediaType, reformulatedQuery, preExtractedFilter);
     const encoder = new TextEncoder();
     const chatService = this.chatService;
     const redisService = this.redisService;
@@ -196,7 +192,7 @@ export class ChatController {
     const requestStart = Date.now();
     try {
       const body = await req.json();
-      const { message, history, chatId, provider, model, mediaType: rawMediaType } = body;
+      const { message, history, chatId, mediaType: rawMediaType } = body;
       const mediaType: MediaType = (rawMediaType === MEDIA_TYPES.MOVIES)
         ? MEDIA_TYPES.MOVIES
         : ((rawMediaType === MEDIA_TYPES.SERIES) ? MEDIA_TYPES.SERIES : MEDIA_TYPES.ANIME);
@@ -213,9 +209,6 @@ export class ChatController {
         );
       }
 
-      const requestedModel = model || provider || '';
-      const modelId = normalizeModelId(requestedModel);
-      const textModel = MODEL_REGISTRY[modelId]?.textModel || modelId;
       const normalizedQuery = normalizeQuery(message);
 
       // Determine the conversation history array
@@ -240,121 +233,77 @@ export class ChatController {
         activeHistory = history || [];
       }
 
-      // 1 & 2. L1 (Redis) and L2 (Qdrant) Cache Checks BEFORE any LLM tool call to avoid router latency
-      const cacheCheckStart = Date.now();
+      // 1. Execute the LangGraph workflow
       const isCacheableQuery = !isTemporalQuery(normalizedQuery) && activeHistory.length === 0;
-      if (isCacheableQuery) {
-        // L1 Cache Check
-        try {
-          const cachedResponse = await this.redisService.getExactRecommendationCache(normalizedQuery);
-          if (cachedResponse) {
-            console.log(`Step 1: L1 exact cache check - Hit! (Bypassed router) | Total time: ${Date.now() - cacheCheckStart}ms`);
-
-            // Increment popularity of queries on hits too
-            await this.redisService.incrementQueryLeaderboard(normalizedQuery);
-
-            if (user) {
-              // Create chat thread if guest started a conversation
-              if (!activeChatId) {
-                const newChat = await this.chatService.createNewConversation(user.id, message);
-                activeChatId = newChat.id;
-              }
-              // Save user message to PostgreSQL
-              await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent: CHAT_INTENTS.VECTOR_SEARCH });
-              return this.buildCachedStreamResponse(cachedResponse, activeChatId, CHAT_INTENTS.VECTOR_SEARCH);
-            } else {
-              return this.buildCachedStreamResponse(cachedResponse, null, CHAT_INTENTS.VECTOR_SEARCH);
-            }
-          }
-        } catch (cacheErr) {
-          console.warn("[Cache Error] L1 exact cache check failed, falling back:", cacheErr);
+      const resultState = await compiledChatGraph.invoke(
+        {
+          message,
+          history: activeHistory,
+          chatId: activeChatId,
+          mediaType,
+          isCacheable: isCacheableQuery,
+          normalizedQuery,
+          requestStart
         }
-        console.log(`Step 1: L1 exact cache check - Miss | Total time: ${Date.now() - cacheCheckStart}ms`);
-
-        // L2 Cache Check
-        const l2Start = Date.now();
-        try {
-          console.log(`[L2 Cache Check] Trying L2 semantic cache for query: "${normalizedQuery}"...`);
-          const semanticCacheRepo = new SemanticCacheRepository(modelId);
-          const cachedResponse = await semanticCacheRepo.retrieveCache(normalizedQuery);
-          if (cachedResponse) {
-            console.log(`Step 2: L2 semantic cache check - Hit! (Bypassed router) | Model: ${textModel} | Total time: ${Date.now() - l2Start}ms`);
-
-            // Increment popularity of queries on hits too
-            await this.redisService.incrementQueryLeaderboard(normalizedQuery);
-
-            if (user) {
-              // Create chat thread if guest started a conversation
-              if (!activeChatId) {
-                const newChat = await this.chatService.createNewConversation(user.id, message);
-                activeChatId = newChat.id;
-              }
-              // Save user message to PostgreSQL
-              await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent: CHAT_INTENTS.VECTOR_SEARCH });
-              return this.buildCachedStreamResponse(cachedResponse, activeChatId, CHAT_INTENTS.VECTOR_SEARCH);
-            } else {
-              return this.buildCachedStreamResponse(cachedResponse, null, CHAT_INTENTS.VECTOR_SEARCH);
-            }
-          } else {
-            console.log(`Step 2: L2 semantic cache check - Miss | Model: ${textModel} | Total time: ${Date.now() - l2Start}ms`);
-          }
-        } catch (cacheErr) {
-          console.warn("[Cache Error] L2 semantic cache check failed, falling back:", cacheErr);
-        }
-      } else {
-        console.log(`Step 1: L1 exact cache check - Miss | Total time: 0ms`);
-        console.log(`Step 2: L2 semantic cache check - Skipped | Model: ${textModel} | Total time: 0ms`);
-      }
-
-      // 3. Route the intent and extract metadata filters in a single hop using tool calling
-      const routerStart = Date.now();
-      const { intent, toolCall, reformulatedQuery } = await this.chatService.routeAndParseQuery(
-        normalizedQuery,
-        activeHistory,
-        mediaType,
-        modelId
       );
-      console.log(`Step 3: ChatService.routeAndParseQuery (Tool Router classification) - Intent: ${intent} | Model: ${textModel} | Total time: ${Date.now() - routerStart}ms`);
 
-      // Handle direct PostgreSQL factual database lookup bypassing vector store completely
-      if (intent === CHAT_INTENTS.FACTUAL_LOOKUP && toolCall && toolCall.name === ROUTER_TOOL_NAMES.FACTUAL_LOOKUP) {
-        const factualStart = Date.now();
-        const { anime_title, attribute } = toolCall.args;
-        console.log(`[Factual Lookup] Title: "${anime_title}", Attribute: "${attribute}"`);
-        
-        const animeRepo = new AnimeDocumentRepository();
-        const doc = await animeRepo.findAnimeByTitle(anime_title, modelId);
-        
-        let replyText = '';
-        if (doc) {
-          const matchedTitle = extractTitleFromContent(doc.content) || anime_title;
-          const val = attribute === 'all' 
-            ? JSON.stringify(doc.metadata) 
-            : doc.metadata[attribute];
+      const intent = resultState.intent || CHAT_INTENTS.DIRECT_CHAT;
 
-          if (val !== undefined && val !== null && val !== '') {
-            const attrLabel = attribute.charAt(0).toUpperCase() + attribute.slice(1);
-            replyText = `**${matchedTitle}** ${attrLabel}: ${val}`;
-          } else {
-            replyText = `I found **${matchedTitle}** in the database, but no "${attribute}" field was recorded in its metadata.`;
-          }
-        } else {
-          replyText = `I couldn't find any anime in the database matching title **"${anime_title}"**.`;
-        }
-
-        console.log(`Step 4: PostgreSQL Factual Search - Completed lookup | Model: ${textModel} | Total time: ${Date.now() - factualStart}ms`);
-
-        // Save messages if authenticated
+      // Handle L1/L2 Cache Hit from graph state
+      if (resultState.cachedResponse) {
         if (user) {
           if (!activeChatId) {
             const newChat = await this.chatService.createNewConversation(user.id, message);
             activeChatId = newChat.id;
           }
-          // Cast intent as 'VECTOR_SEARCH' for chat DB schema compatibility constraints
           await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent: CHAT_INTENTS.VECTOR_SEARCH });
-          await this.chatService.saveChatMessage(activeChatId, 'model', replyText, { intent: CHAT_INTENTS.VECTOR_SEARCH });
+          return this.buildCachedStreamResponse(resultState.cachedResponse, activeChatId, CHAT_INTENTS.VECTOR_SEARCH);
+        } else {
+          return this.buildCachedStreamResponse(resultState.cachedResponse, null, CHAT_INTENTS.VECTOR_SEARCH);
         }
+      }
 
+      // Guest Mode (No authenticated user) - Cache Miss path
+      if (!user) {
+        if (intent === CHAT_INTENTS.UNSUPPORTED) {
+          return this.buildUnderDevelopmentResponse(null, intent);
+        }
+        return this.buildChatStreamResponse(
+          resultState.responseStream,
+          normalizedQuery,
+          activeHistory,
+          null,
+          resultState.modelId,
+          intent,
+          requestStart
+        );
+      }
+
+      // Member Mode (Authenticated user) - Cache Miss path
+      if (!activeChatId) {
+        const newChat = await this.chatService.createNewConversation(user.id, message);
+        activeChatId = newChat.id;
+      }
+
+      // Save user message (and model reply if factual lookup) to database
+      await this.chatService.saveChatMessage(
+        activeChatId, 
+        'user', 
+        message, 
+        { intent: intent === CHAT_INTENTS.FACTUAL_LOOKUP ? CHAT_INTENTS.VECTOR_SEARCH : intent }
+      );
+
+      if (intent === CHAT_INTENTS.UNSUPPORTED) {
+        return this.buildUnderDevelopmentResponse(activeChatId, intent);
+      }
+
+      if (intent === CHAT_INTENTS.FACTUAL_LOOKUP) {
+        // Collect factual lookup plain text from the async generator to write model reply to chat DB
+        let replyText = "";
+        for await (const chunk of resultState.responseStream) {
+          replyText += chunk;
+        }
+        await this.chatService.saveChatMessage(activeChatId, 'model', replyText, { intent: CHAT_INTENTS.VECTOR_SEARCH });
         return new Response(new TextEncoder().encode(replyText), {
           headers: {
             'Content-Type': 'text/plain; charset=utf-8',
@@ -364,42 +313,16 @@ export class ChatController {
         });
       }
 
-      // Guest Mode (No authenticated user) - Cache Miss path
-      if (!user) {
-        if (intent === CHAT_INTENTS.UNSUPPORTED) {
-          console.log(`Step 4: Unsupported - Initiating under-development fallback response... | Model: ${textModel}`);
-          return this.buildUnderDevelopmentResponse(null, intent);
-        }
-        if (intent === CHAT_INTENTS.DIRECT_CHAT) {
-          console.log(`Step 4: Direct Chat - Initiating direct conversational streaming... | Model: ${textModel}`);
-        } else if (intent === CHAT_INTENTS.VECTOR_SEARCH) {
-          console.log(`Step 4: Vector Search RAG - Initiating recommendation streaming... | Model: ${textModel}`);
-        }
-        return this.buildChatStreamResponse(normalizedQuery, activeHistory, null, modelId, intent, mediaType, reformulatedQuery, toolCall?.args, requestStart);
-      }
-
-      // Member Mode (Authenticated user) - Cache Miss path
-      if (!activeChatId) {
-        const newChat = await this.chatService.createNewConversation(user.id, message);
-        activeChatId = newChat.id;
-      }
-
-      // Save the incoming user message to PostgreSQL with the deduced intent metadata (original casing preserved)
-      await this.chatService.saveChatMessage(activeChatId, 'user', message, { intent: intent === CHAT_INTENTS.FACTUAL_LOOKUP ? CHAT_INTENTS.VECTOR_SEARCH : intent });
-
-      if (intent === CHAT_INTENTS.UNSUPPORTED) {
-        console.log(`Step 4: Unsupported - Initiating under-development fallback response... | Model: ${textModel}`);
-        return this.buildUnderDevelopmentResponse(activeChatId, intent);
-      }
-
-      if (intent === CHAT_INTENTS.DIRECT_CHAT) {
-        console.log(`Step 4: Direct Chat - Initiating direct conversational streaming... | Model: ${textModel}`);
-      } else if (intent === CHAT_INTENTS.VECTOR_SEARCH) {
-        console.log(`Step 4: Vector Search RAG - Initiating recommendation streaming... | Model: ${textModel}`);
-      }
-
       // Return the consolidated response stream
-      return this.buildChatStreamResponse(normalizedQuery, activeHistory, activeChatId, modelId, intent, mediaType, reformulatedQuery, toolCall?.args, requestStart);
+      return this.buildChatStreamResponse(
+        resultState.responseStream,
+        normalizedQuery,
+        activeHistory,
+        activeChatId,
+        resultState.modelId,
+        intent,
+        requestStart
+      );
 
     } catch (error: any) {
       console.error('Chat processing failed:', error);

@@ -12,6 +12,8 @@ export const SUPPORTED_MODELS = {
   QWEN3_14B: 'qwen-3-14b',
 } as const;
 
+export const DEFAULT_MODEL_ID = SUPPORTED_MODELS.QWEN3_14B;
+
 export type ModelId = typeof SUPPORTED_MODELS[keyof typeof SUPPORTED_MODELS];
 
 export interface ModelMetadata {
@@ -127,29 +129,6 @@ export const normalizeModelId = (input: string): ModelId => {
   return SUPPORTED_MODELS.GEMINI_FLASH;
 };
 
-/**
- * Generates the prompt template for intent classification routing.
- */
-export const getRouteIntentPrompt = (query: string): string => {
-  const sanitizedQuery = query.replace(/"/g, '\\"');
-  return `You are a query classifier for an AI recommendation assistant.
-We only support animated TV series (anime) recommendations. We do not support live-action movies, live-action TV series, or non-anime content.
-
-Classify the user's query into exactly one of these three intents:
-1. "VECTOR_SEARCH": Use this if the user is asking for recommendations, suggestions, lists of anime/animated series, or describing a plot/characters/themes of an anime they want to find.
-   - Also use this if the user is refining, correcting, or adding filters/constraints to a previous recommendation search (e.g., specifying a studio, year, genre, rating, or length).
-   - Example: "suggest me isekai anime", "recommend a good romance show", "anime where mc is op", "looking for an anime about space", "Studios should be passione", "I meant producer is Passione", "only from 2023", "less than 13 episodes"
-2. "DIRECT_CHAT": Use this if the user is greeting you, asking generic questions, defining concepts, explaining terms, or having a casual conversation.
-   - Example: "hello", "what is an isekai?", "explain what shonen means", "who are you?"
-3. "UNSUPPORTED": Use this if the user is asking for recommendations, suggestions, or information about live-action movies, live-action TV series, or non-anime content (like Hollywood/Bollywood movies, Game of Thrones, Kdramas, sitcoms).
-   - Example: "recommend some live action fantasy series", "best hollywood action movies", "good sitcoms to watch"
-   - Note: Anime movies or anime series (like Akira, Spirited Away, Naruto) are anime and should be classified as VECTOR_SEARCH, not UNSUPPORTED.
-
-Output ONLY the word "DIRECT_CHAT", "VECTOR_SEARCH", or "UNSUPPORTED" (without quotes or punctuation). Do not add any explanation.
-
-Query: "${sanitizedQuery}"
-Response:`;
-};
 
 export const getMetadataFilterPrompt = (query: string): string => {
   const sanitizedQuery = query.replace(/"/g, '\\"');
@@ -232,28 +211,31 @@ Answer:
  */
 export const RECOMMENDATION_PROMPT_TEMPLATE = `
 You are PlotArmor AI, an expert recommender of animated TV series (anime). We currently only support animated TV series (anime) on our platform.
-Use the following pieces of retrieved context and conversation history and conversation summary to answer the user's question and provide a recommendation.
-If you don't know the answer or the context doesn't match perfectly, use your general knowledge to suggest only animated TV series (anime) that fit the description, but mention that it's a broader recommendation.
-Do NOT recommend live-action movies or live-action series under any circumstances. If the user asks for non-animated or live-action media, explain politely that you only support animated TV series (anime) and guide them to find anime instead.
+Use the provided retrieved context, conversation history, and conversation summary to answer the user's question.
+
 Always be conversational, enthusiastic, and helpful.
+Do NOT recommend live-action movies or live-action series under any circumstances. If the user asks for non-animated or live-action media, explain politely that you only support animated TV series (anime) and guide them to find anime instead.
 
 -- Formatting Instructions --
-* Always output recommendations strictly inside custom ":::anime-card" block boundaries.
-* For each recommended anime/movie/series, render the details block EXACTLY in the following structure (do NOT modify the keys in brackets):
+1. If the user is asking for recommendations, lists of shows, or a general overview/details of a specific anime, render the details block of each show EXACTLY inside a custom ":::anime-card" block structure (do NOT modify the bracket keys):
 :::anime-card
 [Title] Anime Title Here
 [Image] exact_image_url_here
 [Year] Release Year Here
-[Episodes] Episode Count or Runtime Here (e.g. 28 episodes for series, or 148 min for movies)
-[StartDate] Airing Start Date Here (e.g. 2023-10-06)
-[EndDate] Airing End Date Here (e.g. 2024-03-22)
+[Episodes] Episode Count or Runtime Here (e.g. 28 episodes or 120 min)
+[StartDate] Airing Start Date Here (e.g. 2002-10-03)
+[EndDate] Airing End Date Here (e.g. 2007-02-08)
 [Studio] Producing Studio Here
-[Status] Airing Status Here (Must display the actual status value from the context metadata, e.g. "Finished Airing", "Currently Airing", or "Not yet aired" - show ALL statuses as recorded!)
-[Score] Score Here (numeric score from metadata, e.g., 9.1 or 8.5)
-[Genres] Action, Fantasy, Comedy (comma separated genres from the context page content)
-[Description] A 2-3 sentence synopsis/explanation describing the show and explaining how it fits the user's OP MC or plot query.
+[Status] Airing Status Here (e.g. "Finished Airing", "Currently Airing", or "Not yet aired")
+[Score] Score Here (e.g., 8.01 or 9.1)
+[Genres] Action, Fantasy, Comedy (comma-separated genres from the context)
+[Description] A 2-3 sentence synopsis describing the show and explaining how it fits.
 [MAL] exact_url_here
 :::
+
+2. If the user is asking a specific factual question (e.g., "how many episodes", "when did it start airing", "what studio produced it") or has a follow-up question, answer dynamically and conversationally using standard markdown text. Format dates cleanly (e.g., "October 3, 2002").
+
+3. You can combine both formats in a single response if the user asks a mixed query (e.g. answering a subjective question in markdown paragraphs, followed by the cards for the referenced anime).
 
 Conversation History:
 {chat_history}
