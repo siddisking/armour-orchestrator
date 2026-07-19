@@ -65,12 +65,30 @@ export class VectorRepository {
    * Translates simple key-value/comparison filter to Qdrant's REST filter schema.
    */
   private mapToQdrantFilter(filter: Record<string, any>): any {
+    const normalizedFilter: Record<string, any> = {};
+
+    // 1. Process and translate keys
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === null || value === undefined) continue;
+
+      if (key === 'minScore') {
+        normalizedFilter.score = { ...normalizedFilter.score, gte: value };
+      } else if (key === 'minEpisodes') {
+        normalizedFilter.episodes = { ...normalizedFilter.episodes, gte: value };
+      } else if (key === 'score' || key === 'episodes') {
+        normalizedFilter[key] = { ...normalizedFilter[key], ...value };
+      } else if (['year', 'studios', 'type', 'status'].includes(key)) {
+        normalizedFilter[key] = value;
+      }
+      // Skip 'plot_keywords', 'limit', and 'genres' because they are either search params
+      // or not ingested in the Qdrant metadata schema.
+    }
+
     const mustConditions: any[] = [];
 
-    for (const [key, value] of Object.entries(filter)) {
+    // 2. Build must conditions
+    for (const [key, value] of Object.entries(normalizedFilter)) {
       const fieldKey = `metadata.${key}`;
-
-      if (value === null || value === undefined) continue;
 
       if (Array.isArray(value)) {
         value.forEach(val => {
