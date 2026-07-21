@@ -12,7 +12,6 @@
   "dependencies": {
     "@langchain/community": "^1.1.27",
     "@langchain/core": "^1.1.41",
-    "@langchain/google-genai": "^2.1.28",
     "@langchain/langgraph": "^1.4.8",
     "@langchain/openai": "^1.4.4",
     "@langchain/qdrant": "^1.0.3",

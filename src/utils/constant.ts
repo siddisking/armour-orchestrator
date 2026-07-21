@@ -1,5 +1,6 @@
 export const PROVIDERS = {
   GEMINI: 'gemini',
+  HUGGINGFACE: 'huggingface',
   SILICONFLOW: 'siliconflow',
 } as const;
 
@@ -24,6 +25,7 @@ export interface ModelMetadata {
   tableName: string;
   dimensions: number;
   baseURL?: string;
+  embeddingBaseURL?: string;
 }
 
 export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
@@ -40,6 +42,7 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
     provider: PROVIDERS.SILICONFLOW,
     textModel: 'Qwen/Qwen2.5-7B-Instruct',
     embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    embeddingBaseURL: 'https://api.siliconflow.com/v1',
     tableName: 'anime_documents_qwen',
     dimensions: 1024,
     baseURL: 'https://api.siliconflow.com/v1',
@@ -47,8 +50,9 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
   [SUPPORTED_MODELS.QWEN_14B]: {
     id: SUPPORTED_MODELS.QWEN_14B,
     provider: PROVIDERS.SILICONFLOW,
-    textModel: 'Qwen/Qwen2.5-14B-Instruct',
+    textModel: 'Qwen/Qwen3-14B',
     embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    embeddingBaseURL: 'https://api.siliconflow.com/v1',
     tableName: 'anime_documents_qwen',
     dimensions: 1024,
     baseURL: 'https://api.siliconflow.com/v1',
@@ -56,8 +60,9 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
   [SUPPORTED_MODELS.QWEN_32B]: {
     id: SUPPORTED_MODELS.QWEN_32B,
     provider: PROVIDERS.SILICONFLOW,
-    textModel: 'Qwen/Qwen2.5-32B-Instruct',
+    textModel: 'Qwen/Qwen2.5-Coder-32B-Instruct',
     embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    embeddingBaseURL: 'https://api.siliconflow.com/v1',
     tableName: 'anime_documents_qwen',
     dimensions: 1024,
     baseURL: 'https://api.siliconflow.com/v1',
@@ -67,6 +72,7 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
     provider: PROVIDERS.SILICONFLOW,
     textModel: 'Qwen/Qwen2.5-72B-Instruct',
     embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    embeddingBaseURL: 'https://api.siliconflow.com/v1',
     tableName: 'anime_documents_qwen',
     dimensions: 1024,
     baseURL: 'https://api.siliconflow.com/v1',
@@ -76,11 +82,18 @@ export const MODEL_REGISTRY: Record<ModelId, ModelMetadata> = {
     provider: PROVIDERS.SILICONFLOW,
     textModel: 'Qwen/Qwen3-14B',
     embeddingModel: 'Qwen/Qwen3-Embedding-0.6B',
+    embeddingBaseURL: 'https://api.siliconflow.com/v1',
     tableName: 'anime_documents_qwen',
     dimensions: 1024,
     baseURL: 'https://api.siliconflow.com/v1',
   },
 };
+
+export const SAFETY_CONFIG = {
+  HUGGINGFACE_BASE_URL: 'https://router.huggingface.co/hf-inference/models',
+  ADVERSARIAL_MODEL: 'protectai/deberta-v3-base-prompt-injection-v2',
+  TOXIC_MODEL: 'unitary/toxic-bert',
+} as const;
 
 export const CHAT_INTENTS = {
   DIRECT_CHAT: 'DIRECT_CHAT',

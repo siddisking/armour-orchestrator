@@ -1,4 +1,3 @@
-import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatOpenAI } from '@langchain/openai';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { StringOutputParser } from '@langchain/core/output_parsers';
@@ -25,24 +24,28 @@ import {
   MediaType,
 } from '../utils/constant';
 
-const formatDocumentsAsString = (documents: any[]) =>
-  documents.map((doc) => {
-    const yearStr = doc.metadata.year ? `\nYear: ${doc.metadata.year}` : '';
-    const studiosStr = doc.metadata.studios ? `\nStudios: ${doc.metadata.studios}` : '';
-    const statusStr = doc.metadata.status ? `\nStatus: ${doc.metadata.status}` : '';
-    const ratingStr = doc.metadata.rating ? `\nRating: ${doc.metadata.rating}` : '';
-    const scoreStr = doc.metadata.score ? `\nScore: ${doc.metadata.score}` : '';
-    const imageStr = doc.metadata.image_url ? `\nImage URL: ${doc.metadata.image_url}` : '';
-    const urlStr = doc.metadata.url ? `\nURL: ${doc.metadata.url}` : '';
-    const episodesStr = doc.metadata.episodes ? `\nEpisodes: ${doc.metadata.episodes}` : '';
-    const startStr = doc.metadata.start_date ? `\nStart Date: ${doc.metadata.start_date}` : '';
-    const endStr = doc.metadata.end_date ? `\nEnd Date: ${doc.metadata.end_date}` : '';
+// Custom helper: Format contextual documents retrieved from Vector DB into a clean markdown structure
+const formatDocumentsAsString = (documents: any[]): string => {
+  return documents
+    .map((doc, idx) => {
+      const yearStr = doc.metadata.year ? `\nYear: ${doc.metadata.year}` : '';
+      const studiosStr = doc.metadata.studios ? `\nStudios: ${doc.metadata.studios}` : '';
+      const statusStr = doc.metadata.status ? `\nStatus: ${doc.metadata.status}` : '';
+      const ratingStr = doc.metadata.rating ? `\nRating: ${doc.metadata.rating}` : '';
+      const scoreStr = doc.metadata.score ? `\nScore: ${doc.metadata.score}` : '';
+      const imageStr = doc.metadata.image_url ? `\nImage URL: ${doc.metadata.image_url}` : '';
+      const urlStr = doc.metadata.url ? `\nURL: ${doc.metadata.url}` : '';
+      const episodesStr = doc.metadata.episodes ? `\nEpisodes: ${doc.metadata.episodes}` : '';
+      const startStr = doc.metadata.start_date ? `\nStart Date: ${doc.metadata.start_date}` : '';
+      const endStr = doc.metadata.end_date ? `\nEnd Date: ${doc.metadata.end_date}` : '';
 
-    const metadataPrefix = "\nMetadata:";
-    const metadataContent = `${yearStr}${studiosStr}${statusStr}${ratingStr}${scoreStr}${imageStr}${urlStr}${episodesStr}${startStr}${endStr}`;
+      const metadataPrefix = "\nMetadata:";
+      const metadataContent = `${yearStr}${studiosStr}${statusStr}${ratingStr}${scoreStr}${imageStr}${urlStr}${episodesStr}${startStr}${endStr}`;
 
-    return `${doc.pageContent}${metadataContent ? metadataPrefix + metadataContent : ''}`;
-  }).join("\n\n");
+      return `${doc.pageContent}${metadataContent ? metadataPrefix + metadataContent : ''}`;
+    })
+    .join("\n\n");
+};
 
 const formatHistory = (history: any[] = []) => {
   return history
@@ -68,11 +71,17 @@ const factualLookupTool = tool(
   async () => { },
   {
     name: ROUTER_TOOL_NAMES.FACTUAL_LOOKUP,
-    description: 'Use this tool to lookup objective database facts about a specific anime series, such as episode count, release year, airing status, studios, rating, or score.',
+    description: 'Use this tool ONLY for specific, direct queries that request factual, exact database metadata lookup without recommendations (e.g., list all anime produced by Madhouse studio, find anime rated R, find all action anime released in the year 2022).',
     schema: z.object({
-      anime_title: z.string().describe("The name of the anime title referenced by the user (e.g. Naruto, Attack on Titan)"),
-      attribute: z.enum(['episodes', 'studios', 'score', 'status', 'year', 'genres', 'all'])
-        .describe("The specific database attribute the user is asking for. Use 'all' if they want general metadata details of the show.")
+      filterFields: z.object({
+        genres: z.array(z.string()).optional().describe("Array of genre names"),
+        studios: z.array(z.string()).optional().describe("Array of studio names"),
+        year: z.number().optional().describe("The release year"),
+        rating: z.string().optional().describe("The age rating"),
+        episodes: z.number().optional().describe("Number of episodes"),
+        status: z.string().optional().describe("E.g., Finished Airing, Currently Airing"),
+        minScore: z.number().optional().describe("Minimum score threshold out of 100")
+      }).describe("The exact search filters extracted from the user query")
     })
   }
 );
@@ -81,17 +90,11 @@ const recommendAnimeTool = tool(
   async () => { },
   {
     name: ROUTER_TOOL_NAMES.RECOMMEND_ANIME,
-    description: 'Use this tool when the user is asking for recommendations, suggestions, lists, or searching for anime matching plot descriptions, studios, genres, release years, or scores.',
+    description: 'Use this tool for open recommendation queries seeking recommendations, matching themes, plots, keywords, or preferences (e.g., recommend me a dark fantasy anime like Attack on Titan, suggest action comedy anime, what should I watch if I like psychological thrillers).',
     schema: z.object({
-      plot_keywords: z.string().optional().describe("Plot description, theme keywords, or search tags to query (e.g. bounty hunters in space)"),
-      genres: z.array(z.string()).optional().describe("Target genres matching the query (e.g. ['Action', 'Comedy'])"),
-      studios: z.string().optional().describe("Studio constraint if specified (e.g. Wit Studio)"),
-      year: z.number().optional().describe("Release year constraint if specified (e.g. 2023)"),
-      type: z.string().optional().describe("Constraint for type, e.g. TV, Movie, OVA, Special"),
-      status: z.string().optional().describe("Constraint for status, e.g. Finished Airing, Currently Airing"),
-      minScore: z.number().optional().describe("Minimum rating score constraint"),
-      minEpisodes: z.number().optional().describe("Minimum episode count constraint"),
-      limit: z.number().optional().describe("Limit of matching shows to return")
+      plotKeywords: z.string().optional().describe("Extracted keywords representing themes, mood, plot elements or genres"),
+      genres: z.array(z.string()).optional().describe("Array of genre names"),
+      limit: z.number().default(5).describe("Max recommendations to fetch")
     })
   }
 );
@@ -119,32 +122,25 @@ export interface RouterOutput {
 }
 
 export class ChatService {
-  private geminiVectorRepo: VectorRepository;
-  private siliconflowVectorRepo: VectorRepository;
+  private huggingfaceVectorRepo: VectorRepository;
   private chatRepo: ChatRepository;
-  private geminiLlm: ChatGoogleGenerativeAI;
-  private siliconflowLlm: ChatOpenAI;
+  private chatLlm: ChatOpenAI;
 
   constructor() {
-    this.geminiVectorRepo = new VectorRepository(SUPPORTED_MODELS.GEMINI_FLASH);
-    this.siliconflowVectorRepo = new VectorRepository(SUPPORTED_MODELS.QWEN3_14B);
+    this.huggingfaceVectorRepo = new VectorRepository(SUPPORTED_MODELS.QWEN3_14B);
     this.chatRepo = new ChatRepository();
 
-    // Initialize Gemini. Requires GOOGLE_API_KEY environment variable.
-    const geminiConfig = MODEL_REGISTRY[SUPPORTED_MODELS.GEMINI_FLASH];
-    this.geminiLlm = new ChatGoogleGenerativeAI({
-      model: geminiConfig.textModel,
-      temperature: 0.3,
-    });
-
-
-    // Initialize SiliconFlow Qwen/Qwen3-14B
+    // Initialize Chat LLM
     const config = MODEL_REGISTRY[SUPPORTED_MODELS.QWEN3_14B];
-    this.siliconflowLlm = new ChatOpenAI({
-      apiKey: process.env.SILICONFLOW_API_KEY || '',
+    const apiKey = config.provider === PROVIDERS.HUGGINGFACE
+      ? (process.env.HF_TOKEN || '')
+      : (process.env.SILICONFLOW_API_KEY || '');
+
+    this.chatLlm = new ChatOpenAI({
+      apiKey: apiKey,
       configuration: {
         baseURL: config.baseURL,
-        apiKey: process.env.SILICONFLOW_API_KEY || '', // Nested override
+        apiKey: apiKey,
       },
       modelName: config.textModel,
       temperature: 0.7,
@@ -155,12 +151,10 @@ export class ChatService {
   /**
    * Private helper using selected LLM to extract structured metadata filters from a natural language query.
    */
-  private async extractMetadataFilter(query: string, modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH): Promise<Record<string, any> | undefined> {
+  private async extractMetadataFilter(query: string, modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B): Promise<Record<string, any> | undefined> {
     try {
       const prompt = getMetadataFilterPrompt(query);
-      const config = MODEL_REGISTRY[modelId];
-
-      const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+      const llm = this.chatLlm;
       const response = await llm.invoke(prompt);
       const text = typeof response === 'string' ? response : (response as any).content;
 
@@ -176,12 +170,10 @@ export class ChatService {
     return undefined;
   }
 
-  private async createConversationSummary(history: any[], query: string, modelId: ModelId): Promise<string> {
+  private async createConversationSummary(history: any[], query: string, modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B): Promise<string> {
     try {
       const prompt = getConversationSummaryPrompt(formatHistory(history), query);
-      const config = MODEL_REGISTRY[modelId];
-
-      const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+      const llm = this.chatLlm;
       const response = await llm.invoke(prompt);
       const text = typeof response === 'string' ? response : (response as any).content;
       return text.trim();
@@ -196,7 +188,7 @@ export class ChatService {
     query: string,
     history: any[] = [],
     mediaType: MediaType = MEDIA_TYPES.ANIME,
-    modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH
+    modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B
   ): Promise<RouterOutput> {
     const config = MODEL_REGISTRY[modelId];
     if (mediaType === MEDIA_TYPES.MOVIES || mediaType === MEDIA_TYPES.SERIES) {
@@ -217,7 +209,7 @@ export class ChatService {
 
     const classificationStart = Date.now();
     try {
-      const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+      const llm = this.chatLlm;
 
       // Bind tools to the model
       const llmWithTools = llm.bindTools(ROUTER_TOOLS);
@@ -242,6 +234,8 @@ export class ChatService {
         }
 
         console.log(`Step 3: ChatService.routeAndParseQuery (Tool Call) - Tool: ${toolCall.name} - Total time: ${routeTime}ms`);
+        console.log(`Step 3: ChatService.routeAndParseQuery (Tool Router classification) - Intent: ${intent} | Model: ${config.textModel} | Total time: ${routeTime}ms`);
+
         return {
           intent,
           toolCall: {
@@ -252,19 +246,19 @@ export class ChatService {
         };
       }
 
-      // Default fallback if no tool selected
-      console.log(`Step 3: ChatService.routeAndParseQuery (Text Fallback) - Direct Chat - Total time: ${routeTime}ms`);
+      const routeTimeFallback = Date.now() - classificationStart;
+      console.log(`Step 3: ChatService.routeAndParseQuery (Text Fallback) - Direct Chat - Total time: ${routeTimeFallback}ms`);
+      console.log(`Step 3: ChatService.routeAndParseQuery (Tool Router classification) - Intent: ${CHAT_INTENTS.DIRECT_CHAT} | Model: ${config.textModel} | Total time: ${routeTimeFallback}ms`);
+
       return {
         intent: CHAT_INTENTS.DIRECT_CHAT,
-        toolCall: {
-          name: ROUTER_TOOL_NAMES.DIRECT_CHAT,
-          args: { message: query }
-        },
         reformulatedQuery: classificationQuery
       };
+
     } catch (error) {
       console.warn("Failed to route and parse query:", error);
     }
+
     return {
       intent: CHAT_INTENTS.DIRECT_CHAT,
       toolCall: {
@@ -281,7 +275,7 @@ export class ChatService {
   async streamRecommendation(
     query: string,
     history?: any[],
-    modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH,
+    modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B,
     mediaType: MediaType = MEDIA_TYPES.ANIME,
     reformulatedQuery?: string,
     preExtractedFilter?: Record<string, any>
@@ -323,7 +317,7 @@ export class ChatService {
     const chainSetupStart = Date.now();
     const prompt = PromptTemplate.fromTemplate(RECOMMENDATION_PROMPT_TEMPLATE);
 
-    const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+    const llm = this.chatLlm;
 
     const chain = RunnableSequence.from([
       {
@@ -344,12 +338,11 @@ export class ChatService {
   /**
    * Streams a direct reply for casual conversations or non-vector searches.
    */
-  async streamDirectChat(query: string, history?: any[], modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH) {
+  async streamDirectChat(query: string, history?: any[], modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B) {
     const totalStart = Date.now();
-    const config = MODEL_REGISTRY[modelId];
     const chatHistoryString = formatHistory(history);
     const prompt = PromptTemplate.fromTemplate(DIRECT_CHAT_PROMPT_TEMPLATE);
-    const llm = config.provider === PROVIDERS.SILICONFLOW ? this.siliconflowLlm : this.geminiLlm;
+    const llm = this.chatLlm;
 
     const chain = RunnableSequence.from([
       {

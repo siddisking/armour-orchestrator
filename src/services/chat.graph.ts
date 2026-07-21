@@ -1,6 +1,5 @@
 import { Annotation, StateGraph, END } from "@langchain/langgraph";
 import { RunnableConfig, RunnableSequence, RunnablePassthrough } from "@langchain/core/runnables";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatOpenAI } from "@langchain/openai";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
@@ -12,6 +11,7 @@ import { VectorRepository } from "../repositories/vector.repository";
 import { AnimeDocumentRepository } from "../repositories/anime-document.repository";
 import { SemanticCacheRepository } from "../repositories/semantic-cache.repository";
 import { isTemporalQuery } from "../utils/helpers";
+import { SafetyService } from "./safety.service";
 import {
   SUPPORTED_MODELS,
   ModelId,
@@ -27,6 +27,7 @@ import {
   MEDIA_TYPES,
   MediaType,
   DEFAULT_MODEL_ID,
+  SAFETY_CONFIG,
 } from "../utils/constant";
 
 // --- Types & Configuration ---
@@ -80,26 +81,21 @@ export function getLlmForNode(
     throw new Error(`ModelId ${modelId} not registered in MODEL_REGISTRY`);
   }
 
-  const defaultTemp = modelConfig.provider === PROVIDERS.GEMINI ? 0.3 : 0.7;
-  const finalTemp = temperature !== undefined ? temperature : defaultTemp;
+  const finalTemp = temperature !== undefined ? temperature : 0.7;
+  const apiKey = modelConfig.provider === PROVIDERS.HUGGINGFACE
+    ? (process.env.HF_TOKEN || '')
+    : (process.env.SILICONFLOW_API_KEY || '');
 
-  if (modelConfig.provider === PROVIDERS.GEMINI) {
-    return new ChatGoogleGenerativeAI({
-      model: modelConfig.textModel,
-      temperature: finalTemp,
-    });
-  } else {
-    return new ChatOpenAI({
-      apiKey: process.env.SILICONFLOW_API_KEY || '',
-      configuration: {
-        baseURL: modelConfig.baseURL,
-        apiKey: process.env.SILICONFLOW_API_KEY || '',
-      },
-      modelName: modelConfig.textModel,
-      temperature: finalTemp,
-      frequencyPenalty: 0.2,
-    });
-  }
+  return new ChatOpenAI({
+    apiKey: apiKey,
+    configuration: {
+      baseURL: modelConfig.baseURL,
+      apiKey: apiKey,
+    },
+    modelName: modelConfig.textModel,
+    temperature: finalTemp,
+    frequencyPenalty: 0.2,
+  });
 }
 
 // Helper methods executing dynamic model requests
@@ -231,9 +227,46 @@ export const ChatGraphState = Annotation.Root({
   cachedResponse: Annotation<string | null>(),
   responseStream: Annotation<any>(),
   factualSuccess: Annotation<boolean | null>(),
+  isSafe: Annotation<boolean | null>(),
+  safetyModelId: Annotation<string | null>({
+    value: (x, y) => y ?? x,
+    default: () => null
+  }),
 });
 
 // --- Graph Nodes ---
+
+// Node 0: Input Safety Guardrails (Prompt-Guard + Toxic-BERT)
+async function inputGuardrailNode(state: typeof ChatGraphState.State) {
+  const guardrailStart = Date.now();
+  console.log(`Step 0: Input guardrail check - Initiating safety check...`);
+  try {
+    const safetyService = new SafetyService();
+    const safetyResult = await safetyService.evaluateSafety(state.normalizedQuery);
+    console.log(`Step 0: Input guardrail check - Completed in ${Date.now() - guardrailStart}ms | isSafe: ${safetyResult.isSafe}`);
+    
+    if (!safetyResult.isSafe) {
+      const safetyModelId = safetyResult.checks.adversarial.flag
+        ? SAFETY_CONFIG.ADVERSARIAL_MODEL
+        : SAFETY_CONFIG.TOXIC_MODEL;
+      return { isSafe: false, safetyModelId };
+    }
+    return { isSafe: true, safetyModelId: null };
+  } catch (error) {
+    console.warn(`Step 0: Input guardrail check - Failed after ${Date.now() - guardrailStart}ms, defaulting to safe.`);
+    console.warn("[Guardrail Error] Details:", error);
+    return { isSafe: true, safetyModelId: null };
+  }
+}
+
+// Node 0B: Safety Blocker Output
+async function blockedNode(state: typeof ChatGraphState.State) {
+  console.log(`Step 0: Input guardrail check - Blocked unsafe content request.`);
+  const reply = "I cannot process this request because it does not comply with our safety guidelines.";
+  return { 
+    responseStream: makeTextStream(reply)
+  };
+}
 
 // Node 1: Cache Evaluation (L1 Redis + L2 Qdrant)
 async function checkCachesNode(state: typeof ChatGraphState.State) {
@@ -390,7 +423,7 @@ async function factualLookupNode(state: typeof ChatGraphState.State) {
   console.log(`Step 4: PostgreSQL Factual Search - Completed lookup and initiated LLM generation | Model: ${textModel} | Total time: ${Date.now() - factualStart}ms`);
   const stream = await chain.stream(state.normalizedQuery);
 
-  return { responseStream: stream, factualSuccess: true };
+  return { responseStream: stream, factualSuccess: true, modelId };
 }
 
 // Node 4B: Recommendation Search (Qdrant retrieve & RAG generate)
@@ -441,7 +474,7 @@ async function vectorSearchRagNode(state: typeof ChatGraphState.State) {
 
   console.log(`Step 8: RunnableSequence.stream (Chain Construction) - Total time: ${Date.now() - chainSetupStart}ms`);
   const stream = await chain.stream(state.normalizedQuery);
-  return { responseStream: stream };
+  return { responseStream: stream, modelId };
 }
 
 // Node 4C: Casual Conversational Chat
@@ -468,7 +501,7 @@ async function directChatNode(state: typeof ChatGraphState.State) {
 
   console.log(`Step 5: RunnableSequence.stream (Direct Chat Chain Construction) - Total time: ${Date.now() - totalStart}ms`);
   const stream = await chain.stream(state.normalizedQuery);
-  return { responseStream: stream };
+  return { responseStream: stream, modelId };
 }
 
 // Node 4D: Unsupported Subject Matter Fallback
@@ -479,12 +512,14 @@ async function unsupportedNode(state: typeof ChatGraphState.State) {
   console.log(`Step 4: Unsupported - Initiating under-development fallback response... | Model: ${textModel}`);
   const reply = "This feature is still under development, please check with us later, meanwhile look for any animated series (anime) on our platform";
   
-  return { responseStream: makeTextStream(reply) };
+  return { responseStream: makeTextStream(reply), modelId };
 }
 
 // --- Assemble StateGraph Workflow ---
 
 const workflow = new StateGraph(ChatGraphState)
+  .addNode("input_guardrail", inputGuardrailNode)
+  .addNode("blocked", blockedNode)
   .addNode("check_caches", checkCachesNode)
   .addNode("cqr", cqrNode)
   .addNode("router", routerNode)
@@ -493,7 +528,18 @@ const workflow = new StateGraph(ChatGraphState)
   .addNode("direct_chat", directChatNode)
   .addNode("unsupported", unsupportedNode);
 
-workflow.setEntryPoint("check_caches");
+workflow.setEntryPoint("input_guardrail");
+
+workflow.addConditionalEdges(
+  "input_guardrail",
+  (state) => {
+    return state.isSafe ? "safe" : "unsafe";
+  },
+  {
+    safe: "check_caches",
+    unsafe: "blocked"
+  }
+);
 
 workflow.addConditionalEdges(
   "check_caches",
@@ -543,5 +589,6 @@ workflow.addConditionalEdges(
 workflow.addEdge("rag_recommendation", END);
 workflow.addEdge("direct_chat", END);
 workflow.addEdge("unsupported", END);
+workflow.addEdge("blocked", END);
 
 export const compiledChatGraph = workflow.compile();

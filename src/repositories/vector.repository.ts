@@ -1,6 +1,5 @@
 import { Document } from '@langchain/core/documents';
 import { QdrantVectorStore } from '@langchain/qdrant';
-import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { SUPPORTED_MODELS, ModelId, MODEL_REGISTRY, PROVIDERS, MEDIA_TYPES, MediaType, MEDIA_COLLECTIONS } from '../utils/constant';
 
@@ -19,30 +18,23 @@ export class VectorRepository {
   }
 
   constructor(
-    modelId: ModelId = SUPPORTED_MODELS.GEMINI_FLASH,
+    modelId: ModelId = SUPPORTED_MODELS.QWEN3_14B,
     mediaType: MediaType = MEDIA_TYPES.ANIME
   ) {
     this.modelId = modelId;
     const config = MODEL_REGISTRY[modelId];
     
-    const isQwen = config.provider === PROVIDERS.SILICONFLOW;
     this.collectionName = MEDIA_COLLECTIONS[mediaType];
 
-    if (isQwen) {
-      this.embeddings = new OpenAIEmbeddings({
-        apiKey: process.env.SILICONFLOW_API_KEY || '',
-        openAIApiKey: process.env.SILICONFLOW_API_KEY || '', // Compatibility fallback
-        modelName: config.embeddingModel,
-        configuration: {
-          baseURL: config.baseURL,
-          apiKey: process.env.SILICONFLOW_API_KEY || '', // Nested override to prevent SDK fallback to OPENAI_API_KEY
-        },
-      });
-    } else {
-      this.embeddings = new GoogleGenerativeAIEmbeddings({
-        model: config.embeddingModel,
-      });
-    }
+    this.embeddings = new OpenAIEmbeddings({
+      apiKey: process.env.SILICONFLOW_API_KEY || '',
+      openAIApiKey: process.env.SILICONFLOW_API_KEY || '', // Compatibility fallback
+      modelName: config.embeddingModel,
+      configuration: {
+        baseURL: config.embeddingBaseURL,
+        apiKey: process.env.SILICONFLOW_API_KEY || '', // Nested override to prevent SDK fallback to OPENAI_API_KEY
+      },
+    });
   }
 
   /**

@@ -1,5 +1,4 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
-import { GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { ModelId, SUPPORTED_MODELS, MODEL_REGISTRY, PROVIDERS, CACHE_CONFIG } from '../utils/constant';
 import crypto from 'crypto';
@@ -15,22 +14,15 @@ export class SemanticCacheRepository {
     const config = MODEL_REGISTRY[modelId];
     this.dimensions = config.dimensions;
 
-    const isQwen = config.provider === PROVIDERS.SILICONFLOW;
-    if (isQwen) {
-      this.embeddings = new OpenAIEmbeddings({
+    this.embeddings = new OpenAIEmbeddings({
+      apiKey: process.env.SILICONFLOW_API_KEY || '',
+      openAIApiKey: process.env.SILICONFLOW_API_KEY || '',
+      modelName: config.embeddingModel,
+      configuration: {
+        baseURL: config.embeddingBaseURL,
         apiKey: process.env.SILICONFLOW_API_KEY || '',
-        openAIApiKey: process.env.SILICONFLOW_API_KEY || '',
-        modelName: config.embeddingModel,
-        configuration: {
-          baseURL: config.baseURL,
-          apiKey: process.env.SILICONFLOW_API_KEY || '',
-        },
-      });
-    } else {
-      this.embeddings = new GoogleGenerativeAIEmbeddings({
-        model: config.embeddingModel,
-      });
-    }
+      },
+    });
 
     const qdrantUrl = process.env.QDRANT_URL || "http://127.0.0.1:6333";
     const apiKey = process.env.QDRANT_API_KEY;

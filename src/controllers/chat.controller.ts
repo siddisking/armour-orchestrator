@@ -31,7 +31,7 @@ export class ChatController {
     message: string,
     history: any[],
     activeChatId: string | null,
-    modelId: ModelId,
+    resolvedModelName: string,
     intent: ChatIntent,
     requestStart?: number
   ): Promise<Response> {
@@ -46,7 +46,7 @@ export class ChatController {
         try {
           for await (const chunk of langChainStream) {
             if (isFirstToken && requestStart) {
-              const textModel = MODEL_REGISTRY[modelId]?.textModel || modelId;
+              const textModel = MODEL_REGISTRY[resolvedModelName as ModelId]?.textModel || resolvedModelName;
               const latencySec = ((Date.now() - requestStart) / 1000).toFixed(2);
               console.log(`[TTFT] Time to First Token (Total latency): ${latencySec}s | Model: ${textModel}`);
               isFirstToken = false;
@@ -273,7 +273,7 @@ export class ChatController {
           normalizedQuery,
           activeHistory,
           null,
-          resultState.modelId,
+          resultState.safetyModelId || resultState.modelId,
           intent,
           requestStart
         );
@@ -319,7 +319,7 @@ export class ChatController {
         normalizedQuery,
         activeHistory,
         activeChatId,
-        resultState.modelId,
+        resultState.safetyModelId || resultState.modelId,
         intent,
         requestStart
       );
